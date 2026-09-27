@@ -1,0 +1,993 @@
+/**
+ * Pure functions and LRU cache for Markdown code link hover preview.
+ *
+ * Responsibilities:
+ * - Line range normalization and code slicing with line/byte limits
+ * - URL construction matching store.selectFile
+ * - 4-quadrant positioning and zoom-aware viewport clamping
+ * - Weighted LRU cache for file content with TTL and memory thresholds
+ */
+
+import { isAbsolutePath, normalizeSlashes } from '@/utils/path'
+import { clampRanges, parseLineRanges, type LineRange } from '@/utils/lineRanges'
+import { toFixedCSS, getZoomedViewport } from '@/composables/useSettingsConfig'
+
+// ── Resource limits & constants ─────────────────────────────────────────────
+
+export const DEFAULT_CONTEXT = 30
+export const DEFAULT_NO_RANGE_LINES = 30
+export const MAX_RENDER_BYTES = 512 * 1024 // 512 KiB
+export const MAX_LINE_BYTES = 128 * 1024 // 128 KiB
+
+/**
+ * Lines added per scroll-driven load. A few screens of code, so one scroll
+ * gesture rarely has to wait on a fetch, while each re-highlight batch stays
+ * small enough to render smoothly.
+ */
+export const SCROLL_LOAD_STEP = 200
+
+export const PREVIEW_LRU_MAX_ITEMS = 20
+export const PREVIEW_LRU_MAX_BYTES = 8 * 1024 * 1024 // 8 MiB
+export const PREVIEW_LRU_TTL_MS = 30 * 1000 // 30 seconds
+export const LARGE_FILE_THRESHOLD_BYTES = 2 * 1024 * 1024 // 2 MiB
+
+export const DEFAULT_EDGE_MARGIN = 8
+export const DEFAULT_ANCHOR_GAP = 8
+
+// ── Types ───────────────────────────────────────────────────────────────────
+
+/**
+ * Why a slice stopped short. There is deliberately no 'lines' reason: line
+ * count is unbounded (the pane loads more as you scroll), so only the byte
+ * ceilings can cut a slice short.
+ */
+export type TruncateReason = 'bytes' | 'line'
+
+export interface NormalizedRange {
+  start?: number
+  end?: number
+  hasExplicitRange: boolean
+}
+
+export interface CodeSliceResult {
+  /** Sliced code joined with \n */
+  code: string
+  /** 1-based start line of the slice in the original file */
+  startLine: number
+  /** 1-based end line of the slice in the original file */
+  endLine: number
+  /** Total lines in original file */
+  totalLines: number
+  /** 1-based start line of target highlight, if any */
+  highlightStart?: number
+  /** 1-based end line of target highlight, if any */
+  highlightEnd?: number
+  /**
+   * Full set of target ranges intersecting the rendered window (multi-range
+   * annotations). Authoritative for per-line highlighting; absent/empty means
+   * fall back to highlightStart/highlightEnd. `highlightStart`/`highlightEnd`
+   * always describe the overall min/max so legacy consumers stay correct.
+   */
+  highlightRanges?: LineRange[]
+  /** Whether the requested line was beyond total lines in file */
+  lineOutOfRange: boolean
+  /**
+   * Whether rendering stopped short of `endLine`. Only the byte ceilings set
+   * this — line count is unbounded, so a slice never truncates for length.
+   */
+  renderTruncated: boolean
+  /** Reason for truncation if renderTruncated is true */
+  truncateReason?: TruncateReason
+}
+
+export interface FileContentResponse {
+  content: string
+  name: string
+  path: string
+  supported: boolean
+  isBinary?: boolean
+  truncated?: boolean
+  size: number
+  /**
+   * Line-window metadata, present only when the request carried lineStart/
+   * lineEnd. `totalLines` is the file's full line count; `windowStart`/
+   * `windowEnd` bound `content` (1-based inclusive, `windowEnd < windowStart`
+   * when no lines were captured).
+   */
+  totalLines?: number
+  windowStart?: number
+  windowEnd?: number
+  windowTruncated?: boolean
+}
+
+export interface CachedFileContent extends FileContentResponse {
+  cachedAt: number
+  estimatedBytes: number
+}
+
+// ── Range Normalization ─────────────────────────────────────────────────────
+
+/**
+ * Normalize requested lineStart and lineEnd into clean 1-based line bounds.
+ *
+ * Rules:
+ * - Line numbers must be positive integers (> 0).
+ * - If lineStart is missing/invalid, hasExplicitRange is false.
+ * - If lineEnd is missing or lineEnd < lineStart, lineEnd defaults to lineStart.
+ */
+export function normalizePreviewRange(lineStart?: number, lineEnd?: number): NormalizedRange {
+  const start = lineStart && Number.isInteger(lineStart) && lineStart > 0 ? lineStart : undefined
+  if (!start) {
+    return { hasExplicitRange: false }
+  }
+
+  let end: number = start
+  if (lineEnd && Number.isInteger(lineEnd) && lineEnd >= start) {
+    end = lineEnd
+  }
+
+  return {
+    start,
+    end,
+    hasExplicitRange: true,
+  }
+}
+
+// ── String Byte Length ──────────────────────────────────────────────────────
+
+/**
+ * Fast estimation / calculation of UTF-8 byte length of a string.
+ */
+export function getUtf8ByteLength(str: string): number {
+  if (typeof TextEncoder !== 'undefined') {
+    return new TextEncoder().encode(str).length
+  }
+  // Fallback UTF-8 length estimation
+  let bytes = 0
+  for (let i = 0; i < str.length; i++) {
+    const code = str.charCodeAt(i)
+    if (code <= 0x7f) bytes += 1
+    else if (code <= 0x7ff) bytes += 2
+    else if (code >= 0xd800 && code <= 0xdbff) {
+      bytes += 4
+      i++
+    } else bytes += 3
+  }
+  return bytes
+}
+
+// ── Code Slicing ────────────────────────────────────────────────────────────
+
+export interface SliceCodeOptions {
+  /** Number of expansion steps (+1 expands 5 lines up/down or 10 lines downward) */
+  contextExpansion?: number
+  /** Additional lines to expand upward beyond the default context */
+  expandAboveLines?: number
+  /** Additional lines to expand downward beyond the default context */
+  expandBelowLines?: number
+  /** Full multi-range target (overrides lineStart/lineEnd for highlighting). */
+  lineRanges?: LineRange[]
+  /**
+   * Absolute 1-based line number of `content`'s first line. Set when content is
+   * a server-side line window rather than the whole file, so the slice still
+   * reports real file line numbers. Defaults to 1 (whole file).
+   */
+  baseLineOffset?: number
+  /**
+   * The file's total line count when `content` holds only a window of it.
+   * Derived from content when omitted, which is only correct for a whole file.
+   */
+  totalLines?: number
+}
+
+/** The absolute line range a preview wants to render, before content limits. */
+export interface RenderWindow {
+  startLine: number
+  endLine: number
+  highlightStart?: number
+  highlightEnd?: number
+  lineOutOfRange: boolean
+}
+
+/**
+ * Decide which absolute file lines a preview should show, independent of the
+ * content actually available. Pure line arithmetic over `totalLines`, so the
+ * same call plans a server fetch and drives the render slice — one source of
+ * truth for both.
+ *
+ * Slicing constraints:
+ * - When target line is given: show [start - 30, end + 30], clamped to file.
+ * - When no target line: show the first 30 lines.
+ * - When lineStart > totalLines: show the last up to 30 lines and mark lineOutOfRange.
+ *
+ * There is NO line-count ceiling: the pane grows its slice as the user scrolls
+ * (see SCROLL_LOAD_STEP), so a long file is walked rather than clipped. Only
+ * the byte ceilings in sliceCodeForPreview can cut a slice short.
+ */
+export function computeRenderWindow(
+  lineStart: number | undefined,
+  lineEnd: number | undefined,
+  totalLines: number,
+  options: SliceCodeOptions = {}
+): RenderWindow {
+  // A multi-range annotation overrides the single (lineStart,lineEnd) pair:
+  // the overall min/max drives the window, and the full list is kept for
+  // per-line highlighting. normalizePreviewRange stays the single-range path.
+  const requestedRanges = options.lineRanges && options.lineRanges.length > 0 ? options.lineRanges : undefined
+  const single = normalizePreviewRange(lineStart, lineEnd)
+  const { start: reqStart, end: reqEnd, hasExplicitRange: singleHasRange } = requestedRanges
+    ? {
+        start: requestedRanges[0].start,
+        end: requestedRanges[requestedRanges.length - 1].end,
+        hasExplicitRange: true,
+      }
+    : single
+  const hasExplicitRange = requestedRanges ? true : singleHasRange
+  const expansion = Math.max(0, options.contextExpansion ?? 0)
+  const extraAbove = Math.max(0, options.expandAboveLines ?? 0)
+  const extraBelow = Math.max(0, options.expandBelowLines ?? 0)
+
+  let startLine: number
+  let endLine: number
+  let highlightStart: number | undefined
+  let highlightEnd: number | undefined
+  let lineOutOfRange = false
+
+  if (hasExplicitRange && reqStart !== undefined && reqEnd !== undefined) {
+    if (reqStart > totalLines) {
+      lineOutOfRange = true
+      startLine = Math.max(1, totalLines - DEFAULT_NO_RANGE_LINES + 1)
+      endLine = totalLines
+      highlightStart = undefined
+      highlightEnd = undefined
+    } else {
+      highlightStart = reqStart
+      highlightEnd = Math.min(reqEnd, totalLines)
+
+      const contextLines = DEFAULT_CONTEXT + expansion * 5
+      const contextAbove = contextLines + extraAbove
+      const contextBelow = contextLines + extraBelow
+      const targetSpan = highlightEnd - highlightStart + 1
+
+      let start = Math.max(1, highlightStart - contextAbove)
+      let end = Math.min(totalLines, highlightEnd + contextBelow)
+
+      // Only do initial symmetrical redistribution if user hasn't explicitly used directional expansion
+      if (extraAbove === 0 && extraBelow === 0) {
+        const windowSize = targetSpan + contextLines * 2
+        // If top clamped to 1, expand bottom as much as possible up to windowSize
+        if (start === 1) {
+          end = Math.min(totalLines, start + windowSize - 1)
+        }
+        // If bottom clamped to totalLines, expand top as much as possible up to windowSize
+        if (end === totalLines) {
+          start = Math.max(1, end - windowSize + 1)
+        }
+      }
+
+      startLine = start
+      endLine = end
+    }
+  } else {
+    // No explicit range: show from line 1
+    const count = Math.min(totalLines, DEFAULT_NO_RANGE_LINES + expansion * 10 + extraBelow)
+    startLine = 1
+    endLine = count
+  }
+
+  return {
+    startLine,
+    endLine,
+    highlightStart,
+    highlightEnd,
+    lineOutOfRange,
+  }
+}
+
+/**
+ * Slice file content for preview with real line numbers, context, and hard resource limits.
+ *
+ * `content` is normally the whole file. When it is a server-side line window
+ * instead, pass `baseLineOffset` (the window's first absolute line) and
+ * `totalLines` so line numbers, the out-of-range check, and the "N lines
+ * remaining" hints all stay in file coordinates.
+ *
+ * Additional limits applied here (on top of computeRenderWindow):
+ * - Hard limit MAX_RENDER_BYTES (512 KiB).
+ * - Hard limit MAX_LINE_BYTES (128 KiB) per line.
+ *
+ * Line count is unbounded by design: the caller grows the window as the user
+ * scrolls, so a slice is only ever cut short by the byte ceilings.
+ */
+export function sliceCodeForPreview(
+  content: string,
+  lineStart?: number,
+  lineEnd?: number,
+  options: SliceCodeOptions = {}
+): CodeSliceResult {
+  const baseLineOffset = Math.max(1, options.baseLineOffset ?? 1)
+
+  // Split preserving exact physical lines (compatible with LF and CRLF)
+  const lines = content.split(/\r\n|\r|\n/)
+  // Whole-file mode derives the count from content; window mode is told it, since
+  // content only covers part of the file. An empty whole file has 0 lines.
+  const totalLines = options.totalLines
+    ?? (baseLineOffset === 1 ? (content === '' ? 0 : lines.length) : baseLineOffset + lines.length - 1)
+
+  if (totalLines === 0) {
+    return {
+      code: '',
+      startLine: 1,
+      endLine: 0,
+      totalLines: 0,
+      lineOutOfRange: false,
+      renderTruncated: false,
+    }
+  }
+
+  const win = computeRenderWindow(lineStart, lineEnd, totalLines, options)
+  const { lineOutOfRange } = win
+  let renderTruncated = false
+  let truncateReason: TruncateReason | undefined
+
+  // Clamp the wanted window onto the content actually held. For a whole file
+  // these bounds are the file itself, so nothing changes; for a line window they
+  // keep startLine/endLine describing lines that really exist.
+  //
+  // When the wanted window does not overlap the held content at all (a far-away
+  // annotation, or context expanded past the fetched edge), fall back to the
+  // nearest edge of what we do hold. Those are real lines with real numbers, so
+  // the pane keeps showing valid content while the caller widens the fetch —
+  // strictly better than blanking out mid-read.
+  const availStart = baseLineOffset
+  const availEnd = baseLineOffset + lines.length - 1
+  let effStart = Math.max(win.startLine, availStart)
+  let effEnd = Math.min(win.endLine, availEnd)
+  if (effStart > effEnd) {
+    if (win.startLine > availEnd) {
+      effStart = availEnd
+      effEnd = availEnd
+    } else {
+      effStart = availStart
+      effEnd = availStart
+    }
+  }
+
+  const renderedLines: string[] = []
+  let totalBytes = 0
+
+  for (let lineNo = effStart; lineNo <= effEnd; lineNo++) {
+    const lineText = lines[lineNo - baseLineOffset]
+    const lineByteLength = getUtf8ByteLength(lineText)
+
+    if (lineByteLength > MAX_LINE_BYTES) {
+      renderTruncated = true
+      truncateReason = 'line'
+      break
+    }
+
+    const nextBytes = totalBytes + lineByteLength + (renderedLines.length > 0 ? 1 : 0)
+    if (nextBytes > MAX_RENDER_BYTES) {
+      renderTruncated = true
+      truncateReason = 'bytes'
+      break
+    }
+
+    renderedLines.push(lineText)
+    totalBytes = nextBytes
+  }
+
+  // endLine < startLine means "nothing rendered" (the window had no lines to
+  // back, or the byte/line caps tripped immediately).
+  const actualEndLine = renderedLines.length > 0 ? effStart + renderedLines.length - 1 : effStart - 1
+
+  // Ranges are clamped to the rendered window (a byte-truncated slice means
+  // far-apart ranges can fall outside); only ranges that intersect are
+  // highlighted.
+  const requestedRanges = options.lineRanges && options.lineRanges.length > 0 ? options.lineRanges : undefined
+  const highlightRanges = requestedRanges && !lineOutOfRange
+    ? clampRanges(requestedRanges, effStart, actualEndLine)
+    : undefined
+
+  return {
+    code: renderedLines.join('\n'),
+    startLine: effStart,
+    endLine: actualEndLine,
+    totalLines,
+    highlightStart: win.highlightStart,
+    highlightEnd: win.highlightEnd,
+    highlightRanges,
+    lineOutOfRange,
+    renderTruncated,
+    truncateReason,
+  }
+}
+
+// ── Line-window fetching ────────────────────────────────────────────────────
+
+/**
+ * Extra lines fetched on each side of the render window, so expanding context
+ * stays a local re-slice instead of a round-trip. Keeps the opening request
+ * comfortably inside the server's own window limit.
+ */
+export const FETCH_WINDOW_MARGIN = 200
+
+/**
+ * Hard cap on a single requested window, mirroring the server's limit. Also
+ * the scroll-load step: a lazy load asks for at most this many lines.
+ */
+export const MAX_FETCH_WINDOW_LINES = 800
+
+/** The absolute line range to request from GET /api/file. */
+export interface FetchWindow {
+  start: number
+  end: number
+}
+
+/**
+ * Plan the line window to request for `target`. Derived from the render window
+ * and widened by `margin` on each side so expanding context stays a local
+ * re-slice instead of a round-trip. `computeFetchWindow` is what the *opening*
+ * request uses; later growth is planned incrementally by `nextLoadWindow`.
+ *
+ * `totalLines` is null before the first response (the client cannot know the
+ * file's length yet); planning then assumes a long file and relies on the server
+ * to report the real count, after which the window is clamped to the file.
+ */
+export function computeFetchWindow(
+  target: { lineStart?: number; lineEnd?: number; lineRanges?: string } | null,
+  totalLines: number | null,
+  margin = FETCH_WINDOW_MARGIN
+): FetchWindow {
+  const ranges = target?.lineRanges ? parseLineRanges(target.lineRanges) : undefined
+  // A long-file sentinel: only start/end planning is needed here, and clamping at
+  // EOF is re-done once the server reports the true line count.
+  const planTotal = totalLines !== null && totalLines > 0 ? totalLines : PLANNING_TOTAL_LINES
+  const render = computeRenderWindow(target?.lineStart, target?.lineEnd, planTotal, { lineRanges: ranges })
+
+  const start = Math.max(1, render.startLine - margin)
+  let end = render.endLine + margin
+
+  if (totalLines !== null && totalLines > 0) {
+    end = Math.min(end, totalLines)
+  }
+  if (end - start + 1 > MAX_FETCH_WINDOW_LINES) {
+    end = start + MAX_FETCH_WINDOW_LINES - 1
+  }
+  if (end < start) end = start
+
+  return { start, end }
+}
+
+/** Assumed file length when planning a window before the server reports one. */
+const PLANNING_TOTAL_LINES = 1_000_000_000
+
+/** Whether `[startLine, endLine]` is fully covered by a fetched window. */
+export function windowCovers(
+  fetched: FetchWindow | null,
+  startLine: number,
+  endLine: number
+): boolean {
+  if (!fetched) return false
+  return startLine >= fetched.start && endLine <= fetched.end
+}
+
+// ── Incremental window merging ──────────────────────────────────────────────
+//
+// The pane walks a long file as the user scrolls, so several windowed responses
+// have to be stitched into one contiguous run that sliceCodeForPreview can take
+// as (content, baseLineOffset). These helpers are pure so the stitching is
+// testable without a DOM.
+
+/** A contiguous run of file lines held client-side, in absolute coordinates. */
+export interface LoadedLineWindow {
+  content: string
+  /** 1-based first line of `content`. */
+  startLine: number
+  /** 1-based last line of `content`. `endLine < startLine` means "no lines". */
+  endLine: number
+}
+
+/** The physical lines of a window. An empty window (end < start) has none. */
+export function windowLines(content: string, startLine: number, endLine: number): string[] {
+  if (endLine < startLine) return []
+  return content.split(/\r\n|\r|\n/)
+}
+
+/** Line count of whole-file content, matching sliceCodeForPreview's split rules. */
+function countContentLines(content: string): number {
+  return content === '' ? 0 : content.split(/\r\n|\r|\n/).length
+}
+
+/** The absolute line window a response covers, in file coordinates. */
+export interface ResolvedResponseWindow {
+  /**
+   * The response carries no window metadata at all, so `content` is the entire
+   * file. The server ignores the line window on the whole-file paths (non-text
+   * files, forceText / binary sanitization), where it answers with the full
+   * sanitized content instead.
+   */
+  wholeFile: boolean
+  /** 1-based first line of `content`. */
+  startLine: number
+  /** 1-based last line of `content`. `endLine < startLine` means "no lines". */
+  endLine: number
+  /** The file's total line count, or null when it must be derived from content. */
+  totalLines: number | null
+}
+
+/**
+ * Resolve the absolute line window a response actually covers.
+ *
+ * A response carries window metadata only when the server honoured the request:
+ * `windowStart` is omitted on the whole-file path, while `windowEnd` stays a
+ * bare 0. Reading that pair as the empty-window encoding (`windowEnd <
+ * windowStart`) blanked the pane and showed a bogus "line out of range" notice
+ * for every non-text file — LICENSE, *.bak, .env, an extensionless script — no
+ * matter how many lines it held. Keying off `windowStart` presence separates
+ * the two cases.
+ */
+export function resolveResponseWindow(resp: FileContentResponse): ResolvedResponseWindow {
+  if (resp.windowStart === undefined) {
+    // Whole file: derive the line count the same way sliceCodeForPreview does,
+    // so an empty file reports 0 lines rather than a phantom one.
+    const count = countContentLines(resp.content)
+    return { wholeFile: true, startLine: 1, endLine: count, totalLines: count }
+  }
+  return {
+    wholeFile: false,
+    startLine: resp.windowStart,
+    endLine: resp.windowEnd ?? resp.windowStart,
+    totalLines: resp.totalLines ?? null,
+  }
+}
+
+/**
+ * Merge a freshly fetched window into the lines already held, returning one
+ * contiguous window covering both. Overlapping lines are taken once — both
+ * copies came from the same file, so either is correct.
+ */
+export function mergeLineWindows(
+  held: LoadedLineWindow | null,
+  chunk: LoadedLineWindow
+): LoadedLineWindow {
+  if (!held || held.endLine < held.startLine) return chunk
+  if (chunk.endLine < chunk.startLine) return held
+
+  const startLine = Math.min(held.startLine, chunk.startLine)
+  const endLine = Math.max(held.endLine, chunk.endLine)
+  const lines: string[] = new Array(endLine - startLine + 1)
+
+  const heldLines = windowLines(held.content, held.startLine, held.endLine)
+  for (let i = 0; i < heldLines.length; i++) {
+    lines[held.startLine - startLine + i] = heldLines[i]
+  }
+  const chunkLines = windowLines(chunk.content, chunk.startLine, chunk.endLine)
+  for (let i = 0; i < chunkLines.length; i++) {
+    lines[chunk.startLine - startLine + i] = chunkLines[i]
+  }
+
+  return { content: lines.join('\n'), startLine, endLine }
+}
+
+/**
+ * The next window worth fetching so that `held` moves toward covering
+ * `[wantedStart, wantedEnd]`, clamped to one request's worth of lines. Returns
+ * null when the wanted range is already covered.
+ *
+ * Only the uncovered side is requested, so walking down a long file never
+ * re-fetches what is already on screen.
+ */
+export function nextLoadWindow(
+  held: LoadedLineWindow | null,
+  wantedStart: number,
+  wantedEnd: number,
+  maxLines = MAX_FETCH_WINDOW_LINES
+): FetchWindow | null {
+  const step = Math.max(1, maxLines)
+  const hasHeld = !!held && held.endLine >= held.startLine
+
+  if (!hasHeld) {
+    if (wantedEnd < wantedStart) return null
+    return { start: wantedStart, end: Math.min(wantedEnd, wantedStart + step - 1) }
+  }
+  if (held!.startLine > wantedStart) {
+    // Prepend: take the lines immediately above what is held.
+    const start = Math.max(wantedStart, held!.startLine - step)
+    return { start, end: held!.startLine - 1 }
+  }
+  if (held!.endLine < wantedEnd) {
+    // Append: take the lines immediately below what is held.
+    return { start: held!.endLine + 1, end: Math.min(wantedEnd, held!.endLine + step) }
+  }
+  return null
+}
+
+// ── URL Construction ────────────────────────────────────────────────────────
+
+/**
+ * Build URL to fetch file content, matching store.selectFile convention.
+ * Absolute paths use /api/fs/file?target=..., relative paths use /api/file/...
+ *
+ * Pass `window` to request only that line range (1-based inclusive): the server
+ * then returns just those lines plus the file's total line count instead of the
+ * whole file. The query params are appended after the path so both the
+ * absolute-path and project-relative forms carry them.
+ */
+export function buildPreviewUrl(path: string, window?: FetchWindow | null): string {
+  const normalized = normalizeSlashes(path)
+  let url: string
+  if (isAbsolutePath(normalized)) {
+    url = `/api/fs/file?target=${encodeURIComponent(normalized)}`
+  } else {
+    const cleanPath = normalized.replace(/^\/+/, '')
+    url = `/api/fs/file/${encodeURIComponent(cleanPath)}`
+  }
+  if (!window) return url
+  const sep = url.includes('?') ? '&' : '?'
+  return `${url}${sep}lineStart=${window.start}&lineEnd=${window.end}`
+}
+
+export const DEFAULT_SAFE_AREA_TOP = 36
+
+/**
+ * Resolve bottom pixel position of the top fixed ClawBench App Header.
+ * Prevents floating preview cards or popups from occluding or hiding under the header.
+ */
+export function getAppHeaderBottom(): number {
+  if (typeof document === 'undefined') return DEFAULT_SAFE_AREA_TOP
+  const header = document.querySelector('.header')
+  if (header) {
+    const rect = header.getBoundingClientRect()
+    if (rect.bottom > 0) return Math.round(rect.bottom)
+  }
+  const safeTop = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--header-safe-area-top')) || 0
+  const headerHeight = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--header-height')) || 36
+  const total = headerHeight + safeTop
+  return total > 0 ? total : DEFAULT_SAFE_AREA_TOP
+}
+
+// ── Positioning & Clamp ─────────────────────────────────────────────────────
+
+export interface RectLike {
+  left: number
+  top: number
+  right: number
+  bottom: number
+  width?: number
+  height?: number
+}
+
+export interface ViewportSize {
+  width: number
+  height: number
+}
+
+export interface CardPlacementResult {
+  /** Left coordinate in viewport pixels */
+  viewportX: number
+  /** Top coordinate in viewport pixels */
+  viewportY: number
+  /** CSS left value (scaled for CSS zoom via toFixedCSS) */
+  cssLeft: string
+  /** CSS top value (scaled for CSS zoom via toFixedCSS) */
+  cssTop: string
+  /** Maximum allowable height in viewport pixels (optional dynamic constraint) */
+  maxHeight?: number
+  /** Chosen quadrant name */
+  quadrant: 'bottom-right' | 'bottom-left' | 'top-right' | 'top-left' | 'clamped'
+}
+
+/**
+ * Place floating card near an anchor element using 4-quadrant priority:
+ * 1. Bottom-Right: below anchor, left-aligned with anchor
+ * 2. Bottom-Left: below anchor, right-aligned with anchor
+ * 3. Top-Right: above anchor, left-aligned with anchor
+ * 4. Top-Left: above anchor, right-aligned with anchor
+ * Fallback: clamp to the vertical side with more available space.
+ */
+export function placeNearAnchor(
+  anchorRect: RectLike,
+  cardWidth: number,
+  cardHeight: number,
+  opts: {
+    viewport?: ViewportSize
+    edgeMargin?: number
+    gap?: number
+    safeAreaTop?: number
+  } = {}
+): CardPlacementResult {
+  const vp = opts.viewport ?? (typeof window !== 'undefined' ? getZoomedViewport() : { width: 1024, height: 768 })
+  const edgeMargin = opts.edgeMargin ?? DEFAULT_EDGE_MARGIN
+  const gap = opts.gap ?? DEFAULT_ANCHOR_GAP
+  const resolvedSafeAreaTop = opts.safeAreaTop !== undefined
+    ? opts.safeAreaTop
+    : (typeof window !== 'undefined' ? getAppHeaderBottom() : DEFAULT_SAFE_AREA_TOP)
+  const safeAreaTop = resolvedSafeAreaTop + edgeMargin
+
+  const minX = edgeMargin
+  const maxX = Math.max(edgeMargin, vp.width - cardWidth - edgeMargin)
+  const minY = safeAreaTop
+  const maxY = Math.max(minY, vp.height - cardHeight - edgeMargin)
+
+  // 1. Bottom-Right
+  const brX = anchorRect.left
+  const brY = anchorRect.bottom + gap
+  if (brX >= minX && brX + cardWidth <= vp.width - edgeMargin && brY >= minY && brY + cardHeight <= vp.height - edgeMargin) {
+    const availableHeight = vp.height - edgeMargin - brY
+    return makePlacement(brX, brY, 'bottom-right', availableHeight)
+  }
+
+  // 2. Bottom-Left
+  const blX = anchorRect.right - cardWidth
+  const blY = anchorRect.bottom + gap
+  if (blX >= minX && blX + cardWidth <= vp.width - edgeMargin && blY >= minY && blY + cardHeight <= vp.height - edgeMargin) {
+    const availableHeight = vp.height - edgeMargin - blY
+    return makePlacement(blX, blY, 'bottom-left', availableHeight)
+  }
+
+  // 3. Top-Right
+  const trX = anchorRect.left
+  const trY = anchorRect.top - gap - cardHeight
+  if (trX >= minX && trX + cardWidth <= vp.width - edgeMargin && trY >= minY && trY + cardHeight <= vp.height - edgeMargin) {
+    const availableHeight = anchorRect.top - gap - minY
+    return makePlacement(trX, trY, 'top-right', availableHeight)
+  }
+
+  // 4. Top-Left
+  const tlX = anchorRect.right - cardWidth
+  const tlY = anchorRect.top - gap - cardHeight
+  if (tlX >= minX && tlX + cardWidth <= vp.width - edgeMargin && tlY >= minY && tlY + cardHeight <= vp.height - edgeMargin) {
+    const availableHeight = anchorRect.top - gap - minY
+    return makePlacement(tlX, tlY, 'top-left', availableHeight)
+  }
+
+  // Fallback: prefer side that fits cardHeight, otherwise choose side with more space
+  const spaceBelow = Math.max(0, vp.height - (anchorRect.bottom + gap) - edgeMargin)
+  const spaceAbove = Math.max(0, anchorRect.top - gap - minY)
+  const fitsBelow = spaceBelow >= cardHeight
+  const fitsAbove = spaceAbove >= cardHeight
+  const goBelow = fitsBelow || (!fitsAbove && spaceBelow >= spaceAbove)
+
+  let rawY: number
+  if (goBelow) {
+    rawY = anchorRect.bottom + gap
+  } else {
+    // Going above: limit height to spaceAbove so top does not hide behind header,
+    // and bottom stays above anchorRect.top - gap
+    const actualHeight = Math.min(cardHeight, spaceAbove)
+    rawY = anchorRect.top - gap - actualHeight
+  }
+  const rawX = anchorRect.left
+
+  const clampedX = Math.min(Math.max(rawX, minX), maxX)
+  const clampedY = Math.min(Math.max(rawY, minY), maxY)
+
+  const availableHeight = goBelow
+    ? Math.max(0, vp.height - edgeMargin - clampedY)
+    : Math.max(0, (anchorRect.top - gap) - clampedY)
+
+  return makePlacement(clampedX, clampedY, 'clamped', availableHeight)
+}
+
+function makePlacement(
+  x: number,
+  y: number,
+  quadrant: CardPlacementResult['quadrant'],
+  maxHeight?: number
+): CardPlacementResult {
+  return {
+    viewportX: x,
+    viewportY: y,
+    cssLeft: `${toFixedCSS(x)}px`,
+    cssTop: `${toFixedCSS(y)}px`,
+    maxHeight: maxHeight !== undefined ? Math.round(maxHeight) : undefined,
+    quadrant,
+  }
+}
+
+/**
+ * Clamp card position within viewport bounds during drag or resize.
+ * Ensures the titlebar (at top of card) always stays visible and below the app header.
+ */
+export function clampCardPosition(
+  x: number,
+  y: number,
+  cardWidth: number,
+  cardHeight: number,
+  viewport?: ViewportSize,
+  safeAreaTop?: number,
+  edgeMargin = DEFAULT_EDGE_MARGIN
+): { viewportX: number; viewportY: number; cssLeft: string; cssTop: string } {
+  const vp = viewport ?? (typeof window !== 'undefined' ? getZoomedViewport() : { width: 1024, height: 768 })
+  const resolvedSafeAreaTop = safeAreaTop !== undefined
+    ? safeAreaTop
+    : (typeof window !== 'undefined' ? getAppHeaderBottom() : DEFAULT_SAFE_AREA_TOP)
+  const topSafe = resolvedSafeAreaTop + edgeMargin
+
+  const minX = edgeMargin
+  const maxX = Math.max(edgeMargin, vp.width - cardWidth - edgeMargin)
+  const minY = topSafe
+  const maxY = Math.max(minY, vp.height - cardHeight - edgeMargin)
+
+  const clampedX = Math.min(Math.max(x, minX), maxX)
+  const clampedY = Math.min(Math.max(y, minY), maxY)
+
+  return {
+    viewportX: clampedX,
+    viewportY: clampedY,
+    cssLeft: `${toFixedCSS(clampedX)}px`,
+    cssTop: `${toFixedCSS(clampedY)}px`,
+  }
+}
+
+// ── Weighted LRU Cache ──────────────────────────────────────────────────────
+
+/**
+ * Estimate memory consumption of cached file content in bytes.
+ * Characters in JS are 2 bytes in memory UTF-16, plus object overhead.
+ */
+export function estimateFileMemoryBytes(item: { content?: string }): number {
+  return (item.content?.length || 0) * 2 + 512
+}
+
+export class CodeLinkPreviewCache {
+  private cache = new Map<string, CachedFileContent>()
+  private currentBytes = 0
+
+  constructor(
+    public readonly maxItems = PREVIEW_LRU_MAX_ITEMS,
+    public readonly maxBytes = PREVIEW_LRU_MAX_BYTES,
+    public readonly ttlMs = PREVIEW_LRU_TTL_MS,
+    public readonly largeFileThreshold = LARGE_FILE_THRESHOLD_BYTES
+  ) {}
+
+  public buildKey(projectRoot: string, normalizedPath: string, window?: FetchWindow | null): string {
+    const base = `${normalizeSlashes(projectRoot)}::${normalizeSlashes(normalizedPath)}`
+    // Windowed responses hold only a slice of the file, so two windows of the
+    // same path are different cache entries.
+    return window ? `${base}::${window.start}-${window.end}` : base
+  }
+
+  public get(key: string, now = Date.now()): CachedFileContent | undefined {
+    const item = this.cache.get(key)
+    if (!item) return undefined
+
+    // Check TTL expiration
+    if (now - item.cachedAt > this.ttlMs) {
+      this.delete(key)
+      return undefined
+    }
+
+    // Refresh LRU order: delete and re-insert at end
+    this.cache.delete(key)
+    this.cache.set(key, item)
+    return item
+  }
+
+  public set(key: string, response: FileContentResponse, now = Date.now()): boolean {
+    // Budget against the content actually held, not the file's size on disk: a
+    // windowed response for a huge file holds only a few hundred lines and is
+    // perfectly cacheable.
+    const contentBytes = getUtf8ByteLength(response.content || '')
+
+    // Content above the threshold is NOT cached
+    if (contentBytes > this.largeFileThreshold) {
+      return false
+    }
+
+    // Evict expired entries first
+    this.purgeExpired(now)
+
+    // If key already exists, remove it first to update byte accounting
+    if (this.cache.has(key)) {
+      this.delete(key)
+    }
+
+    const estimatedBytes = estimateFileMemoryBytes(response)
+
+    // Evict oldest items if exceeding capacity
+    while (
+      (this.cache.size >= this.maxItems || this.currentBytes + estimatedBytes > this.maxBytes) &&
+      this.cache.size > 0
+    ) {
+      const oldestKey = this.cache.keys().next().value
+      if (oldestKey !== undefined) {
+        this.delete(oldestKey)
+      } else {
+        break
+      }
+    }
+
+    const cachedItem: CachedFileContent = {
+      ...response,
+      cachedAt: now,
+      estimatedBytes,
+    }
+
+    this.cache.set(key, cachedItem)
+    this.currentBytes += estimatedBytes
+    return true
+  }
+
+  public delete(key: string): boolean {
+    const item = this.cache.get(key)
+    if (!item) return false
+    this.cache.delete(key)
+    this.currentBytes = Math.max(0, this.currentBytes - item.estimatedBytes)
+    return true
+  }
+
+  public clear(): void {
+    this.cache.clear()
+    this.currentBytes = 0
+  }
+
+  public purgeExpired(now = Date.now()): void {
+    for (const [key, item] of this.cache.entries()) {
+      if (now - item.cachedAt > this.ttlMs) {
+        this.delete(key)
+      }
+    }
+  }
+
+  public get size(): number {
+    return this.cache.size
+  }
+
+  public get totalEstimatedBytes(): number {
+    return this.currentBytes
+  }
+}
+
+/** Global shared LRU cache instance for code link previews */
+export const previewCache = new CodeLinkPreviewCache()
+
+// ── Syntax Highlight Line Splitter ──────────────────────────────────────────
+
+/**
+ * Splits syntax-highlighted HTML string into per-line HTML strings,
+ * properly balancing and restoring any opened <span> tags across line breaks.
+ */
+export function splitHighlightedHtml(html: string): string[] {
+  if (!html) return []
+  const lines: string[] = []
+  const openTags: string[] = []
+  let currentLine = ''
+
+  // Matches open span, close span, newline, or chunk of text / other tag
+  const tokenRegex = /(<span\b[^>]*>)|(<\/span>)|(\r\n|\n|\r)|([^<\r\n]+)|(<[^>]+>)/g
+  let match: RegExpExecArray | null
+
+  while ((match = tokenRegex.exec(html)) !== null) {
+    const [, openSpan, closeSpan, newline, text, otherTag] = match
+
+    if (newline) {
+      let lineWithClosed = currentLine
+      for (let i = openTags.length - 1; i >= 0; i--) {
+        lineWithClosed += '</span>'
+      }
+      lines.push(lineWithClosed)
+      currentLine = openTags.join('')
+    } else if (openSpan) {
+      openTags.push(openSpan)
+      currentLine += openSpan
+    } else if (closeSpan) {
+      openTags.pop()
+      currentLine += closeSpan
+    } else if (text) {
+      currentLine += text
+    } else if (otherTag) {
+      currentLine += otherTag
+    }
+  }
+
+  let lineWithClosed = currentLine
+  for (let i = openTags.length - 1; i >= 0; i--) {
+    lineWithClosed += '</span>'
+  }
+  lines.push(lineWithClosed)
+
+  return lines
+}
+

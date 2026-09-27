@@ -1,0 +1,282 @@
+import { ref } from 'vue'
+import { normalizeRatio } from '@/utils/splitRatio'
+import { appLog } from '@/utils/appLog'
+import { DOCK_TAB_IDS, WIDE_SCREEN_PRIMARY_TABS, isDockTabId, type DockTabId } from '@/composables/dockTabs'
+
+const TAG = 'WideScreenLayout'
+
+export const WIDE_SCREEN_MIN_WIDTH = 1024
+// Physical (device-pixel) width threshold for the wide-screen layout. CSS width
+// alone can miss high-resolution tablets whose devicePixelRatio shrinks the CSS
+// viewport below 1024 (e.g. 2400 physical px at DPR 2.5 → 960 CSS px).
+export const WIDE_SCREEN_MIN_PHYSICAL_WIDTH = 1280
+// The active left tab used to be persisted here under a single global key
+// ('clawbench-widescreen-left-tab'). That gave the tab no project dimension, so
+// switching to project B overwrote project A's tab and switching back restored
+// B's. Persistence now lives in composables/useProjectPanel.ts, keyed by project
+// root, and App.vue applies it after the workspace is restored. This module
+// deliberately keeps no storage for `leftTab` — a second writer here would race
+// the per-project one.
+export const WIDE_SCREEN_SPLIT_RATIO_KEY = 'clawbench-widescreen-split-ratio'
+export const WIDE_SCREEN_CHAT_COLLAPSED_KEY = 'clawbench-widescreen-chat-collapsed'
+/**
+ * Validation whitelist for the wide-screen dock. Derived from the DOCK_TABS
+ * registry (composables/dockTabs.ts) so it can never drift from what the dock
+ * renders — the dock renders these ids, and these ids are switchable.
+ *
+ * Historically this was a hand-written array living apart from the render list;
+ * adding a tab without updating it produced a button that did nothing on click.
+ */
+export const WIDE_SCREEN_DOCK_TABS: readonly DockTabId[] = DOCK_TAB_IDS
+
+export { WIDE_SCREEN_PRIMARY_TABS }
+
+/**
+ * Visible tab order of the wide-screen vertical dock: fixed primary tabs first,
+ * then the (already-filtered) secondary tabs. Used for rendering and for the
+ * active-indicator position. Deterministic — never depends on runtime geometry.
+ */
+export function wideDockTabOrder(overflowTabs: readonly string[]): string[] {
+  return [...WIDE_SCREEN_PRIMARY_TABS, ...overflowTabs]
+}
+
+/**
+ * Wide-screen detection. Active when the CSS viewport is ≥1024px (desktop), or
+ * when the device's physical width (CSS width × devicePixelRatio) is ≥1280px
+ * AND the screen is landscape. Uses screen.width/screen.height (not window
+ * inner dimensions) for the landscape check so that soft-keyboard resizing on
+ * Android adjustResize cannot flip a portrait tablet into wide-screen mode.
+ */
+export function computeIsWideScreen(cssWidth: number, screenWidth: number, screenHeight: number, devicePixelRatio: number): boolean {
+  const physicalWidth = cssWidth * (devicePixelRatio || 1)
+  return cssWidth >= WIDE_SCREEN_MIN_WIDTH
+    || (physicalWidth >= WIDE_SCREEN_MIN_PHYSICAL_WIDTH && screenWidth > screenHeight)
+}
+
+const isWideScreen = ref(false)
+const leftTab = ref<DockTabId>('browse')
+const splitRatio = ref(0.5)
+export const PANE_LEFT = 'left' as const
+export const PANE_RIGHT = 'right' as const
+export type ActivePane = typeof PANE_LEFT | typeof PANE_RIGHT
+
+/** Wide-screen focus tracking: which pane the user is currently working in. */
+const activePane = ref<ActivePane>(PANE_RIGHT)
+/**
+ * Wide-screen left pane collapsed state. When true, the left column is hidden
+ * and the chat (right) pane takes the full width. Toggled by clicking the
+ * currently-active dock tab again (VS Code-style).
+ */
+const leftCollapsed = ref(false)
+/**
+ * Wide-screen right (chat) pane collapsed state. When true, the chat pane is
+ * hidden and the left pane takes the full width. Toggled by the chat button at
+ * the bottom of the wide-screen vertical dock.
+ */
+const chatCollapsed = ref(false)
+let initialized = false
+let sideEffects: ((tab: DockTabId) => void) | null = null
+let setActiveTab: ((tab: DockTabId) => void) | null = null
+
+// Listener handles kept so re-init (test reset) can remove old listeners
+// instead of accumulating duplicates on window / matchMedia.
+let resizeListener: (() => void) | null = null
+let mql: MediaQueryList | null = null
+let mqlChangeListener: (() => void) | null = null
+
+function initWideScreen() {
+  if (initialized) return
+  initialized = true
+  try {
+    const stored = localStorage.getItem(WIDE_SCREEN_SPLIT_RATIO_KEY)
+    if (stored !== null) {
+      const raw = Number(stored)
+      if (Number.isFinite(raw)) splitRatio.value = normalizeRatio(raw)
+    }
+  } catch {
+    // ignore
+  }
+  try {
+    const stored = localStorage.getItem(WIDE_SCREEN_CHAT_COLLAPSED_KEY)
+    if (stored !== null) chatCollapsed.value = stored === '1'
+  } catch {
+    // ignore
+  }
+  if (typeof window !== 'undefined') {
+    const recompute = () => {
+      isWideScreen.value = computeIsWideScreen(
+        window.innerWidth,
+        window.screen.width,
+        window.screen.height,
+        window.devicePixelRatio || 1,
+      )
+    }
+    recompute()
+    // Remove any previously registered listeners (a prior init in this
+    // process, e.g. after a test reset, may have added them).
+    if (resizeListener) window.removeEventListener('resize', resizeListener)
+    if (mql && mqlChangeListener) {
+      if (typeof mql.removeEventListener === 'function') mql.removeEventListener('change', mqlChangeListener)
+      else if (typeof (mql as { removeListener?: unknown }).removeListener === 'function') (mql as { removeListener: (cb: () => void) => void }).removeListener(mqlChangeListener)
+    }
+    // Viewport resize covers rotation, window resize and browser-zoom DPR changes.
+    resizeListener = recompute
+    window.addEventListener('resize', recompute)
+    if (typeof window.matchMedia === 'function') {
+      mql = window.matchMedia(`(min-width: ${WIDE_SCREEN_MIN_WIDTH}px)`)
+      mqlChangeListener = () => recompute()
+      if (typeof mql.addEventListener === 'function') {
+        mql.addEventListener('change', mqlChangeListener)
+      } else if (typeof (mql as { addListener?: unknown }).addListener === 'function') {
+        ;(mql as { addListener: (cb: () => void) => void }).addListener(mqlChangeListener)
+      }
+    }
+  }
+}
+
+/** Returns the shared wide-screen state refs (initializes once). */
+export function useWideScreenLayout() {
+  initWideScreen()
+  return { isWideScreen, leftTab, splitRatio, activePane, leftCollapsed, chatCollapsed }
+}
+
+/** Ref access for useTabDrawer (init once, return only the refs it needs). */
+export function getWideScreenState() {
+  initWideScreen()
+  return { isWideScreen, leftTab }
+}
+
+/** Record which pane the user is currently working in (drives focus-aware shortcuts). */
+export function setActivePane(pane: 'left' | 'right') {
+  activePane.value = pane
+}
+
+/** Collapse (true) or expand (false) the wide-screen left pane. */
+export function setLeftCollapsed(collapsed: boolean) {
+  // Mutual-exclusion guard: the left pane cannot be collapsed while the right
+  // (chat) pane is hidden — otherwise both panes would be display:none and the
+  // content area would go blank. When the chat pane is hidden the left pane
+  // already takes the full width, so collapsing it is a no-op anyway.
+  if (collapsed && chatCollapsed.value) return
+  leftCollapsed.value = collapsed
+}
+
+/**
+ * Collapse (true, hide chat) or expand (false, show chat) the wide-screen right
+ * pane. Persisted so the chat stays hidden across reloads.
+ */
+export function setChatCollapsed(collapsed: boolean) {
+  chatCollapsed.value = collapsed
+  // Mutual-exclusion guard: hiding the chat pane forces the left pane back open
+  // so there is always at least one visible pane (see setLeftCollapsed).
+  if (collapsed) leftCollapsed.value = false
+  try {
+    localStorage.setItem(WIDE_SCREEN_CHAT_COLLAPSED_KEY, collapsed ? '1' : '0')
+  } catch {
+    // ignore
+  }
+}
+
+/**
+ * Focus continuity on entering wide-screen: if the user was on chat, the right
+ * pane (chat) is focused; otherwise they were in a left-column tab.
+ */
+export function resolveActivePaneOnEnter(currentActiveTab: string): 'left' | 'right' {
+  return currentActiveTab === 'chat' ? 'right' : 'left'
+}
+
+/**
+ * Whether the chat panel is actually on screen right now — i.e. the user can
+ * see its content. Used to decide "the user is already looking at this session,
+ * so don't notify".
+ *
+ * Takes plain values rather than reading the refs itself. That is deliberate:
+ * the caller is `<script setup>`, where a ref is NOT auto-unwrapped, so
+ * `isWideScreen || ...` is always truthy and silently makes every session look
+ * "on screen". Requiring explicit fields makes that mistake a type error.
+ *
+ * Two independent ways the panel can be hidden:
+ *  - narrow layout: only the active tab is rendered, so any non-chat tab hides it
+ *  - wide layout: the chat column is docked, but collapsing it (SplitView
+ *    `rightCollapsed`) gives it display:none — including while activeTab still
+ *    reads "chat"
+ */
+export function isChatPanelVisible(state: {
+  isWideScreen: boolean
+  chatCollapsed: boolean
+  activeTab: string
+}): boolean {
+  if (!state.isWideScreen) return state.activeTab === 'chat'
+  return !state.chatCollapsed
+}
+
+export function registerWideScreenCallbacks(opts: { sideEffects?: (tab: DockTabId) => void; setActiveTab?: (tab: DockTabId) => void }) {
+  sideEffects = opts.sideEffects ?? null
+  setActiveTab = opts.setActiveTab ?? null
+}
+
+/**
+ * Switch the wide-screen left column tab. Writes activeTab + side-effects via
+ * callbacks; does NOT call onTabSwitch.
+ *
+ * Does not persist: the tab is remembered per project by useProjectPanel.ts,
+ * driven from App.vue's watcher on the active panel tab.
+ *
+ * Rejects unknown tabs loudly: a tab that the dock renders but that is not in
+ * DOCK_TABS would otherwise be a silently dead button (the original forge bug
+ * — click did nothing, with no state change, error or log). The whitelist is
+ * derived from the same registry the dock renders from, so this should be
+ * unreachable in practice; the log exists to make any future divergence
+ * visible on the first click instead of being reported as "nothing happens".
+ */
+export function switchLeftTab(tab: string) {
+  if (!isDockTabId(tab)) {
+    appLog.w(TAG, `switchLeftTab ignored unknown tab "${tab}" — is it missing from DOCK_TABS?`)
+    return
+  }
+  if (leftTab.value === tab) return
+  leftTab.value = tab
+  leftCollapsed.value = false
+  setActiveTab?.(tab)
+  sideEffects?.(tab)
+}
+
+/**
+ * Q1A continuity rule: entering wide-screen mode adopts the current narrow-mode
+ * tab as the left column tab when it is a non-chat tab; otherwise keeps the
+ * current/default leftTab.
+ */
+export function resolveLeftTabOnEnter(currentActiveTab: string, currentLeftTab: string): DockTabId {
+  if (currentActiveTab !== 'chat' && isDockTabId(currentActiveTab)) return currentActiveTab
+  return isDockTabId(currentLeftTab) ? currentLeftTab : 'browse'
+}
+
+/** Normalize + persist the split ratio (persistence owned here, not in SplitView). */
+export function setSplitRatio(ratio: number) {
+  splitRatio.value = normalizeRatio(ratio)
+  try {
+    localStorage.setItem(WIDE_SCREEN_SPLIT_RATIO_KEY, String(splitRatio.value))
+  } catch {
+    // ignore
+  }
+}
+
+export function resetWideScreenState() {
+  leftTab.value = 'browse'
+  splitRatio.value = 0.5
+  isWideScreen.value = false
+  activePane.value = 'right'
+  leftCollapsed.value = false
+  chatCollapsed.value = false
+  sideEffects = null
+  setActiveTab = null
+}
+
+/** Test hooks — do not use in production code. */
+export function _setWideScreenForTest(val: boolean) {
+  isWideScreen.value = val
+}
+export function _resetForTest() {
+  initialized = false
+  resetWideScreenState()
+}

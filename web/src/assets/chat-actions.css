@@ -1,0 +1,58 @@
+/* Shared action button style for chat meta bar — icon + label.
+   Used by: SummaryToggle, file changes button, speak button, info button, etc. */
+.chat-action-btn {
+  flex-shrink: 0;
+  min-width: 22px;
+  height: 22px;
+  padding:0 var(--space-3);
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  border-radius: var(--radius-xs);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  opacity: 1;
+  transition: background var(--duration-slow);
+  font-size: var(--font-size-xs);
+}
+
+@media (hover: hover) {
+  .chat-action-btn:hover {
+    background: var(--bg-tertiary);
+  }
+}
+
+/* Disabled state — action has no meaning for this message (e.g. rewind on the
+   last message: there is nothing after it to truncate). Keep the icon visible
+   but muted and non-interactive. */
+.chat-action-btn:disabled,
+.chat-action-btn.is-disabled {
+  opacity: var(--opacity-disabled);
+  cursor: default;
+}
+
+@media (hover: hover) {
+  .chat-action-btn:disabled:hover,
+  .chat-action-btn.is-disabled:hover {
+    background: transparent;
+  }
+}
+
+.chat-action-btn svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+.chat-action-btn span {
+  white-space: nowrap;
+}
+
+/* Wide variant for buttons with text labels (speak, file changes) */
+.chat-action-btn--wide {
+  min-width: auto;
+  padding:0 var(--space-4);
+}

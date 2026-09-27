@@ -1,0 +1,318 @@
+/**
+ * Internal drag-and-drop payload for attaching files/directories to chat.
+ *
+ * HTML5 DnD only carries a restricted set of types across the app, so we use
+ * a custom MIME type holding a JSON payload. The file manager writes it on
+ * dragstart; the chat column reads it on drop and attaches via useChatContext.
+ * This deliberately does NOT put the item in dataTransfer.files, so the
+ * file manager's own OS-file upload drop handler ignores internal drags.
+ */
+
+export const ATTACH_DRAG_MIME = 'application/x-clawbench-attach'
+
+/** One whole-file reference inside a multi-selection drag. */
+export interface AttachDragEntry {
+  path: string
+  isDir: boolean
+}
+
+export interface AttachDragData {
+  path: string
+  isDir: boolean
+  /** Optional inclusive source line range. When present, dropping attaches the
+   *  file as a RANGE reference (e.g. a mermaid diagram's md code fence), not a
+   *  whole-file reference. */
+  startLine?: number
+  endLine?: number
+  /** Multi-selection payload: the FULL set of items being dragged, so dropping
+   *  on the chat column attaches all of them. Only present for multi-selection
+   *  drags — a single-item drag carries just `path`/`isDir`, keeping the payload
+   *  (and every existing drag source) unchanged. Line ranges never combine with
+   *  entries: ranged sources are always single-item. */
+  entries?: AttachDragEntry[]
+}
+
+/** Write the internal attach payload into a drag event's dataTransfer. */
+export function setAttachDragData(dt: DataTransfer, path: string, isDir: boolean, startLine?: number, endLine?: number) {
+  try {
+    const payload: AttachDragData = { path, isDir }
+    if (typeof startLine === 'number' && typeof endLine === 'number') {
+      payload.startLine = startLine
+      payload.endLine = endLine
+    }
+    dt.setData(ATTACH_DRAG_MIME, JSON.stringify(payload))
+    dt.setData('text/plain', path)
+  } catch {
+    // dataTransfer may be unavailable in some synthetic events — ignore
+  }
+}
+
+/**
+ * Write a MULTI-selection attach payload: `entries` is the whole dragged set,
+ * while `path`/`isDir` still describe the item under the cursor (kept so any
+ * consumer that only understands the single-item shape still works).
+ *
+ * Kept as a separate function rather than an extra positional parameter on
+ * setAttachDragData, so the single-item signature stays unambiguous.
+ */
+export function setMultiAttachDragData(
+  dt: DataTransfer,
+  cursorPath: string,
+  isDir: boolean,
+  entries: AttachDragEntry[],
+) {
+  if (entries.length <= 1) {
+    setAttachDragData(dt, cursorPath, isDir)
+    return
+  }
+  try {
+    const payload: AttachDragData = { path: cursorPath, isDir, entries }
+    dt.setData(ATTACH_DRAG_MIME, JSON.stringify(payload))
+    dt.setData('text/plain', cursorPath)
+  } catch {
+    // dataTransfer may be unavailable in some synthetic events — ignore
+  }
+}
+
+/**
+ * Sanitize the optional multi-selection `entries` array.
+ *
+ * Returns undefined when the field is absent or holds no usable item, so a
+ * single-item payload round-trips to exactly `{path, isDir}` — callers and
+ * tests compare with toEqual, and an explicit `entries: undefined` would
+ * break them.
+ */
+function readEntries(raw: unknown): AttachDragEntry[] | undefined {
+  if (!Array.isArray(raw)) return undefined
+  const entries: AttachDragEntry[] = []
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue
+    const entry = item as AttachDragEntry
+    if (typeof entry.path !== 'string' || !entry.path) continue
+    entries.push({ path: entry.path, isDir: entry.isDir === true })
+  }
+  return entries.length ? entries : undefined
+}
+
+/** Read the internal attach payload, or null if this is not an internal drag. */
+export function readAttachDragData(dt: DataTransfer | null | undefined): AttachDragData | null {
+  if (!dt) return null
+  try {
+    const raw = dt.getData(ATTACH_DRAG_MIME)
+    if (!raw) return null
+    const parsed: unknown = JSON.parse(raw)
+    if (parsed && typeof parsed === 'object' && typeof (parsed as AttachDragData).path === 'string') {
+      const data = parsed as AttachDragData
+      const result: AttachDragData = { path: data.path, isDir: data.isDir === true }
+      if (typeof data.startLine === 'number' && typeof data.endLine === 'number') {
+        result.startLine = data.startLine
+        result.endLine = data.endLine
+      }
+      const entries = readEntries(data.entries)
+      if (entries) result.entries = entries
+      return result
+    }
+  } catch {
+    // malformed payload — treat as non-internal
+  }
+  return null
+}
+
+/**
+ * Expand an attach payload into the concrete list of items to attach.
+ *
+ * A multi-selection drag attaches every entry as a whole file; a single-item
+ * drag attaches just that item, preserving its line range (a mermaid code
+ * fence attaches as a RANGE reference). This is the single place the
+ * multi-vs-single decision lives, so the drop handler stays trivial.
+ */
+export function attachDragTargets(
+  data: AttachDragData,
+): { path: string; isDir: boolean; startLine?: number; endLine?: number }[] {
+  if (data.entries?.length) {
+    // Ranges never coexist with entries; a multi-selection is whole-file only.
+    return data.entries.map(e => ({ path: e.path, isDir: e.isDir }))
+  }
+  return [{ path: data.path, isDir: data.isDir, startLine: data.startLine, endLine: data.endLine }]
+}
+
+/** Whether a drag event carries our internal attach payload (used to gate dragover/drop). */
+export function hasAttachDragData(dt: DataTransfer | null | undefined): boolean {
+  if (!dt) return false
+  try {
+    return !!dt.types?.includes?.(ATTACH_DRAG_MIME)
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Begin an internal attach drag for a known file path: writes the attach
+ * payload, sets effectAllowed and installs the custom drag ghost. Used by drag
+ * sources that already hold the path (image previews) so they attach the
+ * existing file instead of triggering an OS re-upload.
+ *
+ * Returns false when the event carries no dataTransfer (synthetic events) or
+ * the path is empty. Callers must call cleanupDragGhost() from their dragend.
+ */
+export function startAttachDrag(e: DragEvent, path: string, name: string, isDir = false): boolean {
+  const dt = e.dataTransfer
+  if (!dt || !path) return false
+  dt.effectAllowed = 'copy'
+  setAttachDragData(dt, path, isDir)
+  const ghost = buildAttachDragImage(name || path, isDir)
+  dt.setDragImage(ghost, 14, 16)
+  return true
+}
+
+// ── Custom drag ghost ──────────────────────────────────────────────────────
+// The OS-native drag image snapshots the source element, so a selected/accent
+// item renders with a jarring gradient + tint over the browser's translucent
+// ghost.  Canvas-based ghosts also fail in Chrome (shows a blank/noise square),
+// so we use a real DOM element appended off-screen — the browser snapshots it
+// reliably.
+//
+// IMPORTANT: The ghost element must stay in the DOM until the drag operation
+// completes.  Chrome snapshots setDragImage's element asynchronously — removing
+// it synchronously after setDragImage causes a blank/noise ghost.  We store the
+// reference and clean it up in cleanupDragGhost(), called from dragend or as a
+// safety timeout.
+
+let pendingGhost: HTMLElement | null = null
+let pendingGhostTimer: ReturnType<typeof setTimeout> | null = null
+
+export const ATTACH_DRAG_GHOST_FONT = 'bold 13px system-ui, sans-serif'
+export const ATTACH_DRAG_GHOST_PAD_X = 14
+export const ATTACH_DRAG_GHOST_ICON_W = 28
+export const ATTACH_DRAG_GHOST_GAP = 8
+
+export interface AttachDragImageSize {
+  w: number
+  h: number
+}
+
+/** Rough CJK-aware text width estimate so ghost sizing is stable and testable. */
+export function estimateTextWidth(text: string): number {
+  let width = 0
+  for (const ch of text) {
+    width += /[\u1100-\uFFFF]/.test(ch) ? 13 : 6.5
+  }
+  return width
+}
+
+/** Ghost chip dimensions for a given file name. */
+export function computeAttachDragImageSize(name: string): AttachDragImageSize {
+  const textW = estimateTextWidth(name)
+  const w = Math.max(80, Math.ceil(textW + ATTACH_DRAG_GHOST_ICON_W + ATTACH_DRAG_GHOST_GAP + ATTACH_DRAG_GHOST_PAD_X * 2))
+  return { w, h: 44 }
+}
+
+/** Resolve the accent color from CSS variable, with a hard fallback. */
+export function resolveAccentColor(): string {
+  try {
+    const v = getComputedStyle(document.documentElement).getPropertyValue('--accent-color').trim()
+    if (v) return v
+  } catch { /* ignore */ }
+  return '#4a90d9'
+}
+
+/**
+ * Build a real DOM element to use as the drag ghost image.
+ * Uses an off-screen div with accent background pill, icon badge, and bold
+ * white text — then it's passed to setDragImage.
+ *
+ * The ghost element is kept in the DOM and tracked internally.  Call
+ * cleanupDragGhost() from a dragend handler (or it auto-cleans after 5s).
+ *
+ * Chrome cannot snapshot canvas content for setDragImage (renders as noise),
+ * so we must use a real DOM element for reliable rendering.
+ */
+export function buildAttachDragImage(name: string, isDir: boolean): HTMLElement {
+  // Clean up any previous ghost first
+  cleanupDragGhost()
+
+  const accent = resolveAccentColor()
+  const el = document.createElement('div')
+  el.setAttribute('data-attach-ghost', '')
+  el.style.cssText = `
+    position: fixed;
+    top: -9999px;
+    left: -9999px;
+    display: inline-flex;
+    align-items: center;
+    gap: ${ATTACH_DRAG_GHOST_GAP}px;
+    padding: 6px 14px;
+    border-radius: 10px;
+    background: ${accent};
+    color: #fff;
+    font: ${ATTACH_DRAG_GHOST_FONT};
+    white-space: nowrap;
+    pointer-events: none;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.18);
+    z-index: -1;
+  `
+
+  // Icon badge
+  const badge = document.createElement('span')
+  badge.style.cssText = `
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.22);
+    flex-shrink: 0;
+  `
+
+  // Use Lucide-style SVG icons (simple, no font dependency)
+  badge.innerHTML = isDir ? folderSvg : fileSvg
+
+  const label = document.createElement('span')
+  label.textContent = name
+  label.style.cssText = 'overflow: hidden; text-overflow: ellipsis;'
+
+  el.appendChild(badge)
+  el.appendChild(label)
+
+  document.body.appendChild(el)
+  pendingGhost = el
+
+  // Safety timeout: auto-clean after 5s in case dragend never fires. Capture
+  // THIS element — pendingGhost is module-global, so a stale timer left over
+  // from an earlier drag must not remove a newer drag's ghost mid-drag.
+  pendingGhostTimer = setTimeout(() => {
+    if (pendingGhost === el) cleanupDragGhost()
+  }, 5000)
+
+  return el
+}
+
+/**
+ * Remove the pending drag ghost element from the DOM.
+ * Call this from a dragend handler, or it auto-cleans after the safety timeout.
+ */
+export function cleanupDragGhost() {
+  if (pendingGhostTimer !== null) {
+    clearTimeout(pendingGhostTimer)
+    pendingGhostTimer = null
+  }
+  if (pendingGhost && pendingGhost.parentNode) {
+    pendingGhost.parentNode.removeChild(pendingGhost)
+  }
+  pendingGhost = null
+}
+
+// ── Minimal inline SVGs for file/folder icons ─────────────────────────────
+// Kept as raw strings so they render instantly with no font/icon dependency.
+
+const folderSvg = `<svg width="14" height="12" viewBox="0 0 14 12" fill="none" stroke="rgba(255,255,255,0.9)" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M1 3V2a1 1 0 0 1 1-1h3l1.5 2H12a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V3z"/>
+</svg>`
+
+const fileSvg = `<svg width="12" height="14" viewBox="0 0 12 14" fill="none" stroke="rgba(255,255,255,0.9)" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M1 1.5a1 1 0 0 1 1-1h5.5L11 4v8.5a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1v-12z"/>
+  <path d="M7.5 0.5v3.5H11"/>
+  <line x1="3.5" y1="7.5" x2="8.5" y2="7.5"/>
+  <line x1="3.5" y1="9.5" x2="6.5" y2="9.5"/>
+</svg>`

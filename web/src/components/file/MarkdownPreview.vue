@@ -1,0 +1,524 @@
+<template>
+  <div class="markdown-preview">
+    <!-- Rendered markdown -->
+    <div v-if="viewMode === 'rendered'" class="markdown-body" ref="bodyRef" :data-file-path="file?.path || ''" @click="handleClick" @mousedown="onTableMouseDown" @touchstart.passive="onTableTouchStart" @dragstart="onMarkdownDragStart" @dragend="onMarkdownDragEnd" @load.capture="onImageLoad">
+      <div class="markdown-content" v-html="renderedHtml" />
+      <!-- Diff markers: declarative v-for, positioned absolutely inside .markdown-body -->
+      <button
+        v-for="pm in positionedMarkers"
+        :key="pm.id"
+        class="diff-marker diff-marker-inline"
+        :class="`diff-marker-${pm.type}`"
+        :style="{ top: pm.top + 'px', height: pm.height + 'px' }"
+        :data-marker-id="pm.id"
+        role="button"
+        tabindex="0"
+        :aria-label="pm.ariaLabel"
+      >{{ pm.label }}</button>
+    </div>
+  </div>
+
+  <!-- Table row expand modal -->
+  <TableRowModal
+    :data="tableRowModal"
+    @close="closeTableRowModal"
+    @prev="tableRowPrev"
+    @next="tableRowNext"
+  />
+
+  <!-- Inline search bar (bottom of the preview), replacing the SearchDrawer
+       bottom sheet for rendered markdown. Its open state is driven by the
+       searchDrawer state via props; closing is reported upward. -->
+  <MarkdownSearchBar ref="searchBarRef" :open="!!searchOpen" :container="bodyRef" @close="emit('closeSearch')" />
+
+  <!-- Markdown code-link click preview -->
+  <CodeLinkPreview
+    v-if="codeLinkPreview.enabled.value && viewMode === 'rendered'"
+    :preview="codeLinkPreview"
+  />
+</template>
+
+<script setup lang="ts">
+import { ref, watch, nextTick, onBeforeUnmount } from 'vue'
+import { renderMermaidInElement } from '@/composables/useMarkdownRenderer.ts'
+import { usePlatformDetect } from '@/composables/usePlatformDetect.ts'
+import { useDoubleClickCopy } from '@/composables/useDoubleClickCopy.ts'
+import { useQuoteQuestion } from '@/composables/useQuoteQuestion.ts'
+import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
+import { handleCodeBlockClick, handleTableBlockClick } from '@/composables/useCodeBlockHeader.ts'
+import { onMdImageDragStart, onMdImageDragEnd } from '@/utils/mdImageDrag'
+import { onMermaidDragStart, onMermaidDragEnd } from '@/utils/mdMermaidDrag'
+import { handleMdImageAttachClick, type MdImageAttachActions } from '@/utils/mdImageAttach'
+import { handleMermaidAttachClick, type MermaidAttachActions } from '@/utils/mdMermaidAttach'
+import { handleBlockAttachClick } from '@/utils/mdBlockAttach'
+import { handleMdImageOpenClick } from '@/utils/mdImageOpen'
+import { useChatContext } from '@/composables/useChatContext'
+import { useToast } from '@/composables/useToast'
+import { gt } from '@/composables/useLocale'
+import { store } from '@/stores/app.ts'
+import { dirName } from '@/utils/path.ts'
+import { flashElement } from '@/utils/domFlash'
+import { buildMarkdownPreviewDom } from '@/composables/useMarkdownRenderPipeline.ts'
+import { stampSvgFigures } from '@/utils/svgMediaFit.ts'
+import { useTableRowExpand } from '@/composables/useTableRowExpand.ts'
+import TableRowModal from '@/components/common/TableRowModal.vue'
+import MarkdownSearchBar from '@/components/file/MarkdownSearchBar.vue'
+import {
+  diffMarkers,
+  clearDiffMarkers,
+  extractBlocks,
+  extractBlockElements,
+  type BlockInfo,
+} from '@/composables/useMarkdownDiff.ts'
+import { handleDiffMarkerClick } from '@/composables/useDiffMarkerClick.ts'
+import { useCodeLinkPreview, handleVerifiedFilePathClick } from '@/composables/useCodeLinkPreview.ts'
+import { captureMarkdownScroll } from '@/composables/useFileScrollRestore.ts'
+import { setFileScroll, type FileScrollEntry } from '@/utils/fileScrollCache.ts'
+import { handleShareLinkClick } from '@/share/shareLinks'
+import CodeLinkPreview from '@/components/file/CodeLinkPreview.vue'
+import { resolveLocalMediaInContainer, openExternalUrl } from '@/bridge/vscodeBridge'
+import '@/assets/diff-marker.css'
+
+const props = defineProps<{
+    file?: { content: string; path: string; error?: boolean }
+    viewMode?: string
+    searchOpen?: boolean
+    wordWrap?: boolean
+    showLineNumbers?: boolean
+}>()
+const emit = defineEmits(['closeSearch', 'captureScroll'])
+
+const renderedHtml = ref('')
+const bodyRef = ref<HTMLElement | null>(null)
+const searchBarRef = ref<InstanceType<typeof MarkdownSearchBar> | null>(null)
+const imageTimestamp = ref(Date.now())
+let currentRenderId = 0
+
+// ─── Last block list cache (snapshot before Vue update) ───
+const lastBlockList = ref<BlockInfo[]>([])
+
+// ─── Positioned markers for v-for rendering ───
+interface PositionedMarker {
+    id: string
+    type: string
+    label: string
+    ariaLabel: string
+    top: number
+    height: number
+}
+const positionedMarkers = ref<PositionedMarker[]>([])
+
+const quoteQuestion = useQuoteQuestion()
+const { tableRowModal, closeTableRowModal, tableRowPrev, tableRowNext, handleTableRowClick, onTableMouseDown, onTableTouchStart } = useTableRowExpand()
+
+const { handleDblClick } = useDoubleClickCopy({
+    lineSelector: '.code-line',
+    onCopy(target, text) {
+        const el = target as HTMLElement | null
+        const lineEl = el?.closest('.code-line') ?? null
+        if (lineEl) {
+            const preEl = lineEl.closest('pre')
+            const block = lineEl.closest('.markdown-body')
+            const filePath = block?.getAttribute('data-file-path') || props.file?.path || ''
+            const language = preEl?.getAttribute('data-language') || ''
+            const lineNum = parseInt(lineEl.getAttribute('data-line') || '0')
+            quoteQuestion.showBar({
+                text,
+                filePath,
+                language,
+                startLine: lineNum,
+                endLine: lineNum,
+            })
+            return
+        }
+        const block = el?.closest('.markdown-body') ?? null
+        const filePath = block?.getAttribute('data-file-path') || props.file?.path || ''
+        // Block-level double-click (a paragraph/heading/etc.): the block's
+        // source start line is the best line anchor available.
+        const lineBlock = el?.closest('[data-source-line]') as HTMLElement | null
+        const lineNum = parseInt(lineBlock?.getAttribute('data-source-line') || '0', 10)
+        quoteQuestion.showBar({
+            text,
+            filePath,
+            language: '',
+            startLine: lineNum || 0,
+            endLine: lineNum || 0,
+        })
+    },
+})
+
+function captureCurrentScrollState(): FileScrollEntry | null {
+    const el = bodyRef.value
+    if (!el || !props.file?.path) return null
+    const entry = captureMarkdownScroll(el)
+    if (entry) {
+        setFileScroll(props.file.path, entry)
+        emit('captureScroll', entry)
+    }
+    return entry
+}
+
+function onImageLoad() {
+    // An SVG file's intrinsic size is only known once it has decoded, so the
+    // proportional fill-width sizing is re-stamped on every media load.
+    stampSvgFigures(bodyRef.value)
+    window.dispatchEvent(new CustomEvent('realign-file-scroll'))
+}
+
+const { verifyFilePaths, resolveRelativePath, openFilePath, parseFileUri, readLineTargetFromEl } = useFilePathAnnotation()
+const { isPC } = usePlatformDetect()
+const codeLinkPreview = useCodeLinkPreview({
+    containerRef: bodyRef,
+    source: 'file',
+    onBeforeOpen: () => {
+        captureCurrentScrollState()
+    },
+})
+
+// Image attach-to-chat badge (touch devices): actions injected from the shared
+// chat-attachment singleton + toast + i18n labels.
+const { addAttachedFile, removeAttachedFileByPath, hasAttachedFile } = useChatContext()
+const { show: showToast } = useToast()
+const mdImageAttachActions: MdImageAttachActions = {
+    add: addAttachedFile,
+    remove: removeAttachedFileByPath,
+    has: hasAttachedFile,
+    toast: (msg, opts) => showToast(msg, opts),
+    messages: {
+        added: gt('chat.attach.addedToChat'),
+        removed: gt('chat.attach.removedFromChat'),
+    },
+}
+
+// Mermaid range-reference badge: same singletons, ranged identity.
+const mermaidAttachActions: MermaidAttachActions = {
+    add: (path, startLine, endLine) => addAttachedFile(path, false, startLine, endLine),
+    remove: (path, startLine, endLine) => removeAttachedFileByPath(path, startLine, endLine),
+    has: (path, startLine, endLine) => hasAttachedFile(path, startLine, endLine),
+    toast: (msg, opts) => showToast(msg, opts),
+    messages: {
+        added: gt('chat.attach.addedToChat'),
+        removed: gt('chat.attach.removedFromChat'),
+    },
+}
+
+/** Delegated dragstart: images first, then rendered mermaid diagrams (which
+ *  drag as an md line-range reference). Targets are mutually exclusive (img vs
+ *  svg inside div.mermaid). */
+function onMarkdownDragStart(e: DragEvent) {
+    onMdImageDragStart(e)
+    onMermaidDragStart(e)
+}
+
+function onMarkdownDragEnd(e: DragEvent) {
+    onMdImageDragEnd(e)
+    onMermaidDragEnd(e)
+}
+
+function handleClick(event: MouseEvent) {
+    // Share mode: a relative link inside the shared document switches the
+    // share view in place. Must run FIRST — the fallback chain below ends in
+    // openFilePath, which resolves against the (empty) project root and hits
+    // auth-protected endpoints that an anonymous reader cannot use.
+    if (handleShareLinkClick(event)) return
+
+    // Touch image attach badge — first in the chain so its stopPropagation
+    // prevents the click from reaching the image/lightbox handlers below.
+    if (handleMdImageAttachClick(event, mdImageAttachActions)) return
+
+    // Image header "open file" button — opens the source image in the viewer.
+    if (handleMdImageOpenClick(event, openFilePath)) return
+
+    // Touch mermaid range-reference badge (same rationale).
+    if (handleMermaidAttachClick(event, mermaidAttachActions)) return
+
+    // Code/table header attach-to-chat buttons (md line range). Runs before the
+    // copy/wrap header handlers so the paperclip never reaches them.
+    if (handleBlockAttachClick(event, mermaidAttachActions)) return
+
+    // Code block header buttons (copy/wrap)
+    if (handleCodeBlockClick(event)) return
+
+    // Table block header buttons (copy/wrap)
+    if (handleTableBlockClick(event)) return
+
+    // Check for diff marker click first
+    if (handleDiffMarkerClick(event, '.diff-marker-inline')) return
+
+    const target = event.target as HTMLElement | null
+
+    // Check for table row click — open row-form modal
+    if (handleTableRowClick(event)) return
+
+    // Handle code-link preview clicks (desktop) or touch taps.
+    // Only verified *file* paths are intercepted — directories and paths that
+    // have not yet been verified (data-path-type unset) fall through to the
+    // handlers below (anchor navigation / open button / dbl-click), preserving
+    // the pre-feature behavior for those cases.
+    if (handleVerifiedFilePathClick(event, codeLinkPreview)) return
+
+    // Check for commit-hash click
+    const commitEl = target?.closest('.chat-commit-hash, .chat-commit-open-btn')
+    if (commitEl) {
+        event.preventDefault()
+        event.stopPropagation()
+        const sha = commitEl.getAttribute('data-commit-sha')
+        if (sha) {
+            captureCurrentScrollState()
+            window.dispatchEvent(new CustomEvent('navigate-to-commit', { detail: { sha } }))
+        }
+        return
+    }
+    // Check for file-open button or directory path text click
+    const btn = target?.closest<HTMLElement>('.chat-file-open-btn[data-file-path]')
+    const dirEl = target?.closest<HTMLElement>('.chat-file-path[data-file-path][data-path-type="dir"]')
+    const linkOrBtn = btn || dirEl
+    if (linkOrBtn) {
+        event.preventDefault()
+        event.stopPropagation()
+        const { filePath, lineStart, lineEnd, lineRanges } = readLineTargetFromEl(linkOrBtn)
+        if (filePath) {
+            captureCurrentScrollState()
+            codeLinkPreview.close()
+            if (lineRanges) openFilePath(filePath, lineStart, lineEnd, 'file', lineRanges)
+            else openFilePath(filePath, lineStart, lineEnd, 'file')
+        }
+        return
+    }
+    // In-page anchor links
+    const linkEl = target?.closest('a[href^="#"]')
+    if (linkEl) {
+        const href = linkEl.getAttribute('href') || ''
+        if (href.length > 1) {
+            const targetId = decodeURIComponent(href.slice(1))
+            const targetEl = bodyRef.value?.querySelector(`#${CSS.escape(targetId)}`)
+            if (targetEl) {
+                event.preventDefault()
+                event.stopPropagation()
+                targetEl.scrollIntoView({ behavior: 'auto', block: 'start' })
+                flashElement(targetEl)
+                return
+            }
+        }
+    }
+    // External http/https/mailto links
+    const extLinkEl = target?.closest<HTMLAnchorElement>('a[href]')
+    if (extLinkEl) {
+        const href = extLinkEl.getAttribute('href') || ''
+        if (/^(https?:|mailto:)/i.test(href)) {
+            event.preventDefault()
+            event.stopPropagation()
+            openExternalUrl(href)
+            return
+        }
+    }
+    handleDblClick(event, (href, lineStart, lineEnd, lineRanges) => {
+        event.stopPropagation()
+        const anchor = target?.closest<HTMLAnchorElement>('a[href]')
+        const annotatedPath = anchor?.getAttribute('data-file-path')
+        const currentDir = props.file?.path ? dirName(props.file.path) : ''
+        // Prefer the annotated resolved path; for a file:// link take its path
+        // directly; otherwise resolve the relative href against the md's dir.
+        const resolvedPath = annotatedPath
+            || (href.startsWith('file://') ? parseFileUri(href).path : resolveRelativePath(href, currentDir))
+        captureCurrentScrollState()
+        codeLinkPreview.close()
+        if (lineRanges) openFilePath(resolvedPath, lineStart, lineEnd, 'file', lineRanges)
+        else openFilePath(resolvedPath, lineStart, lineEnd, 'file')
+    })
+}
+
+
+/**
+ * Compute marker positions from live DOM.
+ * Uses extractBlockElements to get element references directly,
+ * then calculates top/height via offsetTop chain relative to .markdown-body.
+ */
+function computeMarkerPositions() {
+    const body = bodyRef.value
+    if (!body || diffMarkers.value.length === 0) {
+        positionedMarkers.value = []
+        return
+    }
+
+    const blockEls = extractBlockElements(body.querySelector('.markdown-content') || body)
+
+    const markers: PositionedMarker[] = []
+    for (const marker of diffMarkers.value) {
+        // Marker id formats:
+        //   "{type}-{blockIndex}-{tag}"          (modified, added)
+        //   "{type}-{blockIndex}-old{idx}-{tag}" (deleted, merged blocks)
+        // blockIndex is always the first number after the type prefix
+        const idParts = marker.id.split('-')
+        const blockIndex = parseInt(idParts[1], 10)
+
+        if (blockIndex < 0 || blockIndex >= blockEls.length) continue
+
+        const blockEl = blockEls[blockIndex].el
+
+        // Calculate top relative to .markdown-body via offsetTop chain
+        let top = 0
+        let el: HTMLElement | null = blockEl as HTMLElement
+        while (el && el !== body) {
+            top += el.offsetTop
+            el = el.offsetParent as HTMLElement | null
+        }
+
+        markers.push({
+            id: marker.id,
+            type: marker.type,
+            label: marker.label,
+            ariaLabel: marker.ariaLabel,
+            top,
+            height: (blockEl as HTMLElement).offsetHeight,
+        })
+    }
+
+    positionedMarkers.value = markers
+}
+
+async function doRender(f: { content: string; path?: string; error?: boolean }) {
+    const renderId = ++currentRenderId
+    imageTimestamp.value = Date.now()
+
+    // Shared with the HTML exporter so exported files match the preview exactly.
+    const { html: annotatedHtml, detectedPaths } = buildMarkdownPreviewDom(
+        {
+            content: f.content,
+            path: f.path || '',
+            projectRoot: store.state.projectRoot,
+            homeDir: store.state.homeDir,
+        },
+        { isPC: isPC.value, imageTimestamp: imageTimestamp.value }
+    )
+    renderedHtml.value = annotatedHtml
+
+    if (renderId !== currentRenderId) return
+    await nextTick()
+    if (renderId !== currentRenderId) return
+    const el = bodyRef.value
+    if (!el) return
+
+    resolveLocalMediaInContainer(el)
+
+    if (detectedPaths.length > 0) {
+        const uniquePaths = [...new Set(detectedPaths)]
+        verifyFilePaths(uniquePaths, el.querySelector('.markdown-content') || el)
+    }
+
+    const mermaidTarget = el.querySelector('.markdown-content') as HTMLElement || el
+    await renderMermaidInElement(mermaidTarget, 'md-preview')
+
+    // Proportional fill-width sizing for SVG media (inline <svg> needs no load,
+    // so this resolves it immediately; SVG files are re-stamped on load).
+    stampSvgFigures(mermaidTarget)
+
+    // Update last block list cache and compute marker positions after rendering completes
+    if (renderId === currentRenderId) {
+        lastBlockList.value = extractBlocks(el.querySelector('.markdown-content') || el)
+        computeMarkerPositions()
+        window.dispatchEvent(new CustomEvent('realign-file-scroll'))
+    }
+}
+
+watch(() => props.file, (f) => {
+    if (!f || f.error) {
+        renderedHtml.value = ''
+        return
+    }
+    currentRenderId++
+}, { immediate: true })
+
+watch(() => props.file?.content, (content) => {
+    if (!content) return
+    const f = props.file
+    if (!f || f.error) return
+    doRender(f)
+}, { immediate: true })
+
+watch(() => props.viewMode, async (mode) => {
+    if (mode !== 'rendered') return
+    const f = props.file
+    if (!f || f.error || !f.content) return
+    await nextTick()
+    const el = bodyRef.value
+    if (!el) return
+    resolveLocalMediaInContainer(el)
+    const mermaidTarget = el.querySelector('.markdown-content') as HTMLElement || el
+    await renderMermaidInElement(mermaidTarget, 'md-preview')
+    // Mermaid re-renders here (returning to the rendered view); the diagrams are
+    // freshly produced, so re-stamp their proportional sizing.
+    stampSvgFigures(mermaidTarget)
+    window.dispatchEvent(new CustomEvent('realign-file-scroll'))
+})
+
+// Watch for marker changes and recompute positions
+// immediate: true ensures positions are computed when component mounts
+// with pre-existing markers (e.g. after tab switch while diff is active)
+watch(diffMarkers, () => {
+    nextTick(() => computeMarkerPositions())
+}, { deep: true, immediate: true })
+
+onBeforeUnmount(() => {
+    clearDiffMarkers()
+})
+
+// Clear markers when file changes
+watch(() => props.file?.path, () => {
+    clearDiffMarkers()
+    positionedMarkers.value = []
+})
+
+// Clear markers when switching to raw mode
+watch(() => props.viewMode, () => {
+    positionedMarkers.value = []
+})
+
+// Focus the inline search bar's input (opened via the searchOpen prop).
+// Used by FileViewer.focusSearchInput so the toolbar/ctrl-F flow focuses the
+// search box, matching CodeMirror's openSearch behavior.
+function focusSearchInput() {
+    searchBarRef.value?.focus()
+}
+
+defineExpose({
+    lastBlockList,
+    bodyRef,
+    focusSearchInput,
+    captureCurrentScrollState,
+})
+</script>
+
+<style scoped>
+.markdown-preview {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  position: relative;
+}
+
+.markdown-content {
+  /* Take up full width, markers overlay on top */
+  width: 100%;
+}
+</style>
+
+<style>
+/* ─── Diff markers (same style as CodePreview inline markers) ─── */
+
+/* Override height:100% from CodePreview's global .diff-marker-inline —
+   Markdown markers use inline :style for height from DOM measurement */
+.markdown-preview .markdown-body .diff-marker-inline {
+    position: absolute;
+    /* Keep markers at the right edge of the reading column. The capped
+       .markdown-body used to be centered with `margin: 0 auto`, so a marker at
+       right:0 sat at the element border — i.e. half the slack (W−900)/2 in from
+       the screen edge. Now the element is full-width (padding-based cap), so the
+       same visual spot is `right: max(0px, (100% − 900px)/2)`. */
+    right: max(0px, (100% - 900px) / 2);
+    width: 20px;
+    height: auto;
+    z-index: 2;
+}
+</style>

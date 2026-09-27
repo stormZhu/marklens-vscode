@@ -1,0 +1,606 @@
+/* ==========================================================================
+   Common Markdown Styles
+   Shared by: .markdown-body (file preview), .chat-message.assistant and .chat-message.user (chat), .table-row-value (table row modal)
+   ========================================================================== */
+
+/* Strong / Bold — traditional font-weight bold + darker --text-bold.
+ * Mobile Chrome has a real/native bold cut, so weight alone is enough.
+ * Android WebView (esp. CJK at chat sizes) often synthesizes bold by fattening
+ * outlines, which can look lighter/softer than the browser. Compensate only in
+ * [data-app-mode] with a thin uniform -webkit-text-stroke (hard outline, no
+ * glow) so weight matches browser darkness. Uniform stroke thickens both
+ * horizontal and vertical strokes, avoiding the anisotropy of x-only shadows. */
+.markdown-body strong,
+.markdown-body b,
+.chat-message.assistant strong,
+.chat-message.assistant b,
+.table-row-value strong,
+.table-row-value b {
+    font-weight: bold;
+    color: var(--text-bold);
+}
+
+.chat-message.user strong,
+.chat-message.user b {
+    font-weight: bold;
+    color: #ffffff;
+}
+
+/* WebView bold compensation — uniform outline thickens glyphs crisply.
+ * Avoid blurred text-shadow (0 0 Npx) which looks soft/fuzzy on GPU-composited
+ * layers, and avoid x-only offsets which leave horizontal strokes unchanged. */
+[data-app-mode] .markdown-body strong,
+[data-app-mode] .markdown-body b,
+[data-app-mode] .chat-message.assistant strong,
+[data-app-mode] .chat-message.assistant b,
+[data-app-mode] .table-row-value strong,
+[data-app-mode] .table-row-value b {
+    -webkit-text-stroke: 0.12px currentColor;
+}
+
+[data-app-mode] .chat-message.user strong,
+[data-app-mode] .chat-message.user b {
+    -webkit-text-stroke: 0.1px currentColor;
+}
+
+/* Links */
+.markdown-body a,
+.chat-message.assistant a,
+.table-row-value a {
+    color: var(--accent-color);
+    text-decoration: none;
+}
+
+.markdown-body a:hover,
+.chat-message.assistant a:hover,
+.table-row-value a:hover {
+    text-decoration: underline;
+}
+
+.table-row-value a {
+    word-break: break-all;
+    overflow-wrap: break-word;
+}
+
+/* User message links use lighter blue for readability on blue background */
+.chat-message.user a {
+    color: #b8daff;
+    text-decoration: none;
+}
+
+.chat-message.user a:hover {
+    color: #9dc5f0;
+    text-decoration: underline;
+}
+
+/* Blockquote */
+.markdown-body blockquote,
+.chat-message.assistant blockquote,
+.table-row-value blockquote {
+    border-left: 3px solid var(--border-color);
+    background: var(--bg-secondary);
+    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+
+/* User message blockquote uses translucent overlays on blue background */
+.chat-message.user blockquote {
+    border-left-color: rgba(255, 255, 255, 0.35);
+    background: rgba(0, 0, 0, 0.1);
+}
+
+/* Inline Code */
+.markdown-body code,
+.chat-message.assistant code,
+.table-row-value code {
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-xs);
+}
+
+/* User message inline code uses translucent overlay on blue background */
+.chat-message.user code {
+    background: rgba(0, 0, 0, 0.15);
+    border-radius: var(--radius-xs);
+}
+
+/* Code Block */
+.markdown-body pre,
+.chat-message.assistant pre,
+.table-row-value pre {
+    background: var(--bg-tertiary);
+    overflow-x: auto;
+}
+
+/* Code block wrapper: unified rounded container for header + code */
+.markdown-body .code-block-wrapper,
+.chat-message.assistant .code-block-wrapper,
+.table-row-value .code-block-wrapper {
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+}
+
+.markdown-body .code-block-wrapper pre,
+.chat-message.assistant .code-block-wrapper pre,
+.table-row-value .code-block-wrapper pre {
+    background: var(--code-bg, var(--bg-tertiary));
+    border-radius: 0; /* wrapper handles border-radius */
+    margin: 0;
+}
+
+/* Table block wrapper in table-row-value context (TableRowModal) */
+.table-row-value .table-block-wrapper .table-wrap {
+    margin: 0;
+    border-radius: 0;
+    border: none;
+}
+
+/* Per-line code block uses --code-bg to match CodePreview */
+.markdown-body pre.code-block-pre,
+.chat-message.assistant pre.code-block-pre,
+.table-row-value pre.code-block-pre {
+    background: var(--code-bg, var(--bg-tertiary));
+}
+
+/* User message code block uses translucent overlay on blue background */
+.chat-message.user pre {
+    background: rgba(0, 0, 0, 0.15);
+    overflow-x: auto;
+}
+
+/* User message code block wrapper: translucent overlay on blue background */
+.chat-message.user .code-block-wrapper {
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+}
+
+.chat-message.user .code-block-wrapper pre {
+    background: rgba(0, 0, 0, 0.15);
+    border-radius: 0;
+    margin: 0;
+}
+
+.chat-message.user .code-block-wrapper .code-block-header {
+    background: rgba(0, 0, 0, 0.1);
+    border-bottom-color: rgba(255, 255, 255, 0.15);
+}
+
+.chat-message.user .code-block-wrapper .code-block-lang {
+    color: rgba(255, 255, 255, 0.6);
+}
+
+.chat-message.user .code-block-copy-btn,
+.chat-message.user .code-block-wrap-btn {
+    color: rgba(255, 255, 255, 0.7);
+}
+
+.chat-message.user .code-block-copy-btn:hover,
+.chat-message.user .code-block-wrap-btn:hover {
+    color: #ffffff;
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.chat-message.user .code-block-copy-btn:active,
+.chat-message.user .code-block-wrap-btn:active {
+    background: rgba(255, 255, 255, 0.15);
+}
+
+.chat-message.user .code-block-wrap-btn.is-wrapped {
+    color: #ffffff;
+}
+
+.chat-message.user .code-block-copy-btn.is-copied {
+    color: #ffffff;
+}
+
+.markdown-body pre code,
+.chat-message.assistant pre code,
+.chat-message.user pre code,
+.table-row-value pre code {
+    background: transparent;
+    padding: 0;
+}
+
+/* Lists */
+.markdown-body ul,
+.markdown-body ol,
+.chat-message.assistant ul,
+.chat-message.assistant ol,
+.chat-message.user ul,
+.chat-message.user ol,
+.table-row-value ul,
+.table-row-value ol {
+    padding-left: var(--space-8);
+}
+
+.markdown-body li,
+.chat-message.assistant li,
+.chat-message.user li,
+.table-row-value li {
+    margin: 3px 0;
+}
+
+/* Table */
+.markdown-body table,
+.chat-message.assistant table {
+    border-collapse: collapse;
+}
+
+.markdown-body th,
+.markdown-body td,
+.chat-message.assistant th,
+.chat-message.assistant td {
+    padding: var(--space-4) 14px;
+    border: 1px solid var(--table-border);
+    text-align: left;
+}
+
+.markdown-body th,
+.chat-message.assistant th {
+    background: var(--bg-tertiary);
+    font-weight: var(--font-weight-semibold);
+}
+
+.markdown-body tr:nth-child(odd) td,
+.chat-message.assistant tr:nth-child(odd) td {
+    background: var(--bg-primary);
+}
+
+.markdown-body tr:nth-child(even) td,
+.chat-message.assistant tr:nth-child(even) td {
+    background: var(--bg-secondary);
+}
+
+/* User message table uses translucent overlays on blue background */
+.chat-message.user table {
+    border-collapse: collapse;
+}
+
+/* User message table block header */
+.chat-message.user .table-block-header {
+    background: rgba(0, 0, 0, 0.1);
+    border-bottom-color: rgba(255, 255, 255, 0.15);
+}
+
+.chat-message.user .table-block-label {
+    color: rgba(255, 255, 255, 0.6);
+}
+
+.chat-message.user .table-block-copy-btn,
+.chat-message.user .table-block-wrap-btn {
+    color: rgba(255, 255, 255, 0.7);
+}
+
+.chat-message.user .table-block-copy-btn:hover,
+.chat-message.user .table-block-wrap-btn:hover {
+    color: #ffffff;
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.chat-message.user .table-block-copy-btn:active,
+.chat-message.user .table-block-wrap-btn:active {
+    background: rgba(255, 255, 255, 0.15);
+}
+
+.chat-message.user .table-block-wrap-btn.is-wrapped {
+    color: #ffffff;
+}
+
+.chat-message.user .table-block-copy-btn.is-copied {
+    color: #ffffff;
+}
+
+.chat-message.user .table-block-copy-btn[aria-expanded="true"] {
+    color: #ffffff;
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.chat-message.user .table-block-copy-menu {
+    background: rgba(0, 0, 0, 0.75);
+    border-color: rgba(255, 255, 255, 0.15);
+}
+
+.chat-message.user .table-block-copy-menu-item {
+    color: rgba(255, 255, 255, 0.9);
+}
+
+.chat-message.user .table-block-copy-menu-item:hover {
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.chat-message.user .table-block-copy-menu-item.is-copied {
+    color: #ffffff;
+}
+
+.chat-message.user th,
+.chat-message.user td {
+    padding: var(--space-4) 14px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    text-align: left;
+}
+
+.chat-message.user th {
+    background: rgba(0, 0, 0, 0.15);
+    font-weight: var(--font-weight-semibold);
+    color: rgba(255, 255, 255, 0.95);
+}
+
+.chat-message.user tr:nth-child(odd) td {
+    background: rgba(0, 0, 0, 0.08);
+}
+
+.chat-message.user tr:nth-child(even) td {
+    background: rgba(0, 0, 0, 0.15);
+}
+
+/* ── Table row click-to-expand ── */
+.markdown-body tbody tr[data-row-idx],
+.chat-message.assistant tbody tr[data-row-idx],
+.chat-message.user tbody tr[data-row-idx] {
+    cursor: pointer;
+    transition: background var(--duration-fast);
+    -webkit-tap-highlight-color: transparent;
+}
+
+.markdown-body tbody tr[data-row-idx]:hover,
+.chat-message.assistant tbody tr[data-row-idx]:hover {
+    background: color-mix(in srgb, var(--accent-color, #0066cc) 8%, transparent);
+}
+
+.markdown-body tbody tr[data-row-idx]:active,
+.chat-message.assistant tbody tr[data-row-idx]:active {
+    background: color-mix(in srgb, var(--accent-color, #0066cc) 15%, transparent);
+}
+
+.chat-message.user tbody tr[data-row-idx]:hover {
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.chat-message.user tbody tr[data-row-idx]:active {
+    background: rgba(255, 255, 255, 0.15);
+}
+
+/* ── Table row form modal ── */
+.table-row-form {
+    padding: var(--space-2) 0;
+}
+
+.table-row-field {
+    padding: var(--space-5) var(--space-7);
+    border-bottom: 1px solid var(--border-color, #e0e0e0);
+}
+
+.table-row-field:last-child {
+    border-bottom: none;
+}
+
+.table-row-label {
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-muted, #888);
+    margin-bottom: var(--space-2);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.table-row-value {
+    font-size: var(--font-size-lg);
+    color: var(--text-primary, #1a1a1a);
+    word-break: break-word;
+    cursor: text;
+    user-select: text;
+    -webkit-user-select: text;
+}
+
+.table-row-value code {
+    font-size: var(--font-size-md);
+    padding:1px var(--space-2);
+}
+
+.table-row-value pre {
+    margin: var(--space-3) 0;
+    padding: var(--space-4);
+    border-radius: var(--radius-sm); /* overridden to 0 by .code-block-wrapper pre when wrapped */
+}
+
+.table-row-value blockquote {
+    margin: var(--space-3) 0;
+    padding: var(--space-2) var(--space-6);
+}
+
+/* ── Table row modal layout overrides ── */
+.table-row-value p {
+    margin: 3px 0;
+}
+
+.table-row-value h1,
+.table-row-value h2,
+.table-row-value h3 {
+    margin: var(--space-3) 0 3px;
+    font-weight: var(--font-weight-semibold);
+}
+
+.table-row-value h1 { font-size: var(--font-size-2xl); }
+.table-row-value h2 { font-size: var(--font-size-lg); }
+.table-row-value h3 { font-size: var(--font-size-md); }
+
+.table-row-value img {
+    margin: var(--space-3) 0;
+    width: 200px;
+    height: auto;
+    max-width: none;
+    max-height: none;
+}
+
+.table-row-value hr {
+    margin: var(--space-4) 0;
+}
+
+.table-row-value ul,
+.table-row-value ol {
+    margin: var(--space-3) 0;
+}
+
+.table-row-nav-btn {
+    padding: var(--space-3) var(--space-7);
+    border: 1px solid var(--border-color, #e0e0e0);
+    border-radius: var(--radius-sm);
+    background: var(--bg-tertiary, #f0f0f0);
+    color: var(--text-primary, #1a1a1a);
+    font-size: var(--font-size-md);
+    cursor: pointer;
+    transition: background var(--duration-base), opacity var(--duration-base);
+}
+
+.table-row-nav-btn:hover:not(:disabled) {
+    background: var(--border-color, #ddd);
+}
+
+.table-row-nav-btn:disabled {
+    opacity: var(--opacity-disabled);
+    cursor: default;
+}
+
+/* Image */
+.markdown-body img,
+.chat-message.assistant img,
+.chat-message.user img,
+.table-row-value img {
+    max-width: 100%;
+    max-height: 60dvh;
+    object-fit: contain;
+}
+
+/* Chat inline image — fixed height for uniform gallery look */
+.chat-message.assistant img.chat-img,
+.chat-message.user img.chat-img {
+    max-height: 200px;
+    height: 200px;
+    width: auto;
+    max-width: 100%;
+    object-fit: cover;
+    margin: var(--space-2) 0;
+}
+
+/* Image inside table */
+.markdown-body table img,
+.chat-message.assistant table img,
+.chat-message.user table img {
+    max-width: 80dvw;
+}
+
+/* Horizontal Rule */
+.markdown-body hr,
+.chat-message.assistant hr,
+.table-row-value hr {
+    border: none;
+    border-top: 1px solid var(--border-color);
+}
+
+/* User message horizontal rule */
+.chat-message.user hr {
+    border: none;
+    border-top: 1px solid rgba(255, 255, 255, 0.25);
+}
+
+/* Deleted Text */
+.markdown-body del,
+.chat-message.assistant del,
+.chat-message.user del,
+.table-row-value del {
+    color: color-mix(in srgb, var(--text-secondary) 70%, transparent);
+}
+
+/* File path annotation & open button */
+.markdown-body .chat-file-path,
+.chat-message.assistant .chat-file-path,
+.table-row-value .chat-file-path {
+    font-family: var(--font-mono);
+    background: var(--bg-secondary);
+    border-radius: var(--radius-xs);
+    padding: 0 3px;
+}
+
+.markdown-body .chat-file-open-btn,
+.chat-message.assistant .chat-file-open-btn,
+.table-row-value .chat-file-open-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    border-radius: var(--radius-xs);
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    vertical-align: middle;
+    margin-left: 1px;
+    padding: var(--space-1);
+    line-height: 1;
+    opacity: var(--opacity-muted);
+    transition: opacity var(--duration-base), color var(--duration-base);
+    outline: none;
+    box-shadow: none;
+}
+
+/* User message file path annotation & open button */
+.chat-message.user .chat-file-path {
+    font-family: var(--font-mono);
+    background: rgba(0, 0, 0, 0.15);
+    border-radius: var(--radius-xs);
+    padding: 0 3px;
+}
+
+.chat-message.user .chat-file-open-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    border: none;
+    background: transparent;
+    color: rgba(255, 255, 255, 0.7);
+    cursor: pointer;
+    vertical-align: middle;
+    margin-left: 1px;
+    padding: 0;
+    line-height: 1;
+    opacity: var(--opacity-muted);
+    transition: opacity var(--duration-base), color var(--duration-base);
+    outline: none;
+    box-shadow: none;
+}
+
+.markdown-body .chat-file-open-btn:hover,
+.chat-message.assistant .chat-file-open-btn:hover,
+.table-row-value .chat-file-open-btn:hover {
+    opacity: 1;
+    color: var(--accent-color, #3b82f6);
+}
+
+/* Project-external file open button — orange icon */
+.markdown-body .chat-file-open-btn.external,
+.chat-message.assistant .chat-file-open-btn.external,
+.table-row-value .chat-file-open-btn.external {
+    opacity: var(--opacity-soft);
+    color: #e67e22;
+}
+
+.markdown-body .chat-file-open-btn.external:hover,
+.chat-message.assistant .chat-file-open-btn.external:hover,
+.table-row-value .chat-file-open-btn.external:hover {
+    opacity: 1;
+    color: #d35400;
+}
+
+.chat-message.user .chat-file-open-btn:hover {
+    opacity: 1;
+    color: white;
+}
+
+.markdown-body .chat-file-open-btn svg,
+.chat-message.assistant .chat-file-open-btn svg,
+.chat-message.user .chat-file-open-btn svg,
+.table-row-value .chat-file-open-btn svg {
+    display: block;
+}

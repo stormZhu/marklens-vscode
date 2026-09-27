@@ -1,0 +1,132 @@
+<template>
+  <div class="search-pill" :class="{ focused }">
+    <Search class="search-pill-icon" />
+    <input
+      ref="inputRef"
+      type="text"
+      :value="modelValue"
+      :placeholder="placeholder || t('search.defaultPlaceholder')"
+      @input="$emit('update:modelValue', $event.target.value)"
+      @focus="focused = true"
+      @blur="focused = false"
+      @keydown.enter="onEnter"
+      @keydown="onKeydown"
+      @dblclick="$emit('dblclick')"
+    />
+    <button v-if="modelValue" class="search-pill-clear" @click="$emit('update:modelValue', '')" :title="t('search.clear')">
+      <X :size="12" />
+    </button>
+  </div>
+</template>
+
+<script setup>
+import { Search, X } from 'lucide-vue-next'
+import { ref } from 'vue'
+import { useI18n } from 'vue-i18n'
+
+const { t } = useI18n()
+
+const props = defineProps({
+  modelValue: { type: String, default: '' },
+  placeholder: { type: String, default: '' },
+})
+
+const emit = defineEmits(['update:modelValue', 'enter', 'dblclick', 'down', 'up'])
+
+const inputRef = ref(null)
+const focused = ref(false)
+
+function focus() {
+  const el = inputRef.value
+  if (!el) return
+  el.focus()
+  // Select existing content so typing replaces it (like a normal editor's find box)
+  if (props.modelValue) el.select()
+}
+
+// Forward arrow-key navigation to the parent so the result list can be
+// traversed from the search box (like a normal editor's find box).
+function onKeydown(e) {
+  if (e.key === 'ArrowDown') {
+    e.preventDefault()
+    emit('down')
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault()
+    emit('up')
+  }
+}
+
+// Suppress Enter while an IME composition is in progress (e.g. pinyin on
+// mobile/Android): the commit-Enter that ends a composition must select the
+// composed text, not trigger a list action on the still-incomplete query.
+function onEnter(e) {
+  if (e.isComposing || e.keyCode === 229) return
+  emit('enter')
+}
+
+defineExpose({ focus, inputRef, focused })
+</script>
+
+<style scoped>
+.search-pill {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-full);
+  padding:5px var(--space-6);
+  transition: border-color var(--duration-slow), box-shadow var(--duration-slow);
+}
+
+.search-pill.focused {
+  border-color: var(--accent-color);
+  box-shadow: 0 0 0 2px rgba(74, 144, 217, 0.12);
+}
+
+.search-pill-icon {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.search-pill input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: none;
+  outline: none;
+  font-size: var(--font-size-md);
+  color: var(--text-primary);
+  padding: 0;
+  line-height: var(--line-height-snug);
+}
+
+.search-pill input::placeholder {
+  color: var(--text-muted);
+}
+
+.search-pill-clear {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: none;
+  background: var(--bg-tertiary);
+  border-radius: 50%;
+  cursor: pointer;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  padding: 0;
+  transition: background var(--duration-base), color var(--duration-base);
+}
+
+@media (hover: hover) {
+  .search-pill-clear:hover {
+    background: var(--accent-color);
+    color: #fff;
+  }
+}
+</style>

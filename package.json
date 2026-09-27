@@ -1,0 +1,161 @@
+{
+  "name": "marklens",
+  "displayName": "MarkLens",
+  "description": "Interactive code-aware Markdown preview & custom editor for VSCode — automatic file-path detection & floating code preview card, code/table headers, KaTeX math, Mermaid diagrams, Lightbox zoom, TOC dock, table row modal, 36 themes, and standalone HTML export.",
+  "version": "0.1.0",
+  "publisher": "marklens",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/stormZhu/marklens-vscode.git"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other",
+    "Programming Languages",
+    "Visualization"
+  ],
+  "keywords": [
+    "markdown",
+    "preview",
+    "marklens",
+    "mermaid",
+    "katex",
+    "code-link-preview"
+  ],
+  "activationEvents": [
+    "onLanguage:markdown",
+    "onCustomEditor:marklens.markdownPreview"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "customEditors": [
+      {
+        "viewType": "marklens.markdownPreview",
+        "displayName": "MarkLens Markdown Preview",
+        "selector": [
+          {
+            "filenamePattern": "*.{md,markdown,mdown,mkd}"
+          }
+        ],
+        "priority": "option"
+      }
+    ],
+    "commands": [
+      {
+        "command": "marklens.openPreview",
+        "title": "MarkLens: Open Markdown Preview",
+        "icon": "$(open-preview)"
+      },
+      {
+        "command": "marklens.openPreviewToSide",
+        "title": "MarkLens: Open Markdown Preview to the Side",
+        "icon": "$(split-horizontal)"
+      },
+      {
+        "command": "marklens.selectTheme",
+        "title": "MarkLens: Select Markdown Preview Theme"
+      },
+      {
+        "command": "marklens.exportHtml",
+        "title": "MarkLens: Export Markdown as Standalone HTML"
+      },
+      {
+        "command": "marklens.toggleToc",
+        "title": "MarkLens: Toggle Markdown Outline (TOC)"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "marklens.openPreviewToSide",
+          "when": "editorLangId == markdown",
+          "group": "navigation@1"
+        },
+        {
+          "command": "marklens.openPreview",
+          "when": "editorLangId == markdown",
+          "group": "navigation@2"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "marklens.openPreview",
+          "when": "resourceExtname == .md || resourceExtname == .markdown",
+          "group": "navigation@15"
+        },
+        {
+          "command": "marklens.openPreviewToSide",
+          "when": "resourceExtname == .md || resourceExtname == .markdown",
+          "group": "navigation@16"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "marklens.openPreviewToSide",
+        "key": "ctrl+shift+k",
+        "mac": "cmd+shift+k",
+        "when": "editorLangId == markdown"
+      }
+    ],
+    "configuration": {
+      "title": "MarkLens",
+      "properties": {
+        "marklens.theme": {
+          "type": "string",
+          "default": "auto",
+          "enum": [
+            "auto",
+            "one-light",
+            "ayu-light",
+            "github-light",
+            "light-modern",
+            "light-plus",
+            "quiet-light",
+            "vitesse-light",
+            "bluloco-light",
+            "material-lighter",
+            "alabaster",
+            "everforest-light",
+            "high-contrast-light",
+            "nord-light",
+            "catppuccin-latte",
+            "solarized-light",
+            "gruvbox-light",
+            "solarized-dark",
+            "monokai",
+            "material-darker",
+            "dark-plus",
+            "bluloco-dark",
+            "nord",
+            "everforest-dark",
+            "one-dark-pro",
+            "dracula",
+            "rose-pine",
+            "gruvbox-dark",
+            "solarized-deep",
+            "github-dark",
+            "catppuccin-mocha",
+            "vitesse-dark",
+            "tokyo-night",
+            "kanagawa",
+            "ayu-dark",
+            "night-owl",
+            "high-contrast-dark"
+          ],
+          "description": "Color theme for MarkLens Markdown Preview. Set to 'auto' to automatically follow VSCode Light/Dark theme."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build:extension": "esbuild src/extension/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --target=node18",
+    "build:webview": "vite build",
+    "build": "npm run build:extension && npm run build:webview",
+    "package:vsix": "npm run build && node scripts/package-vsix.mjs",
+    "test": "vitest run"
+  }
+}

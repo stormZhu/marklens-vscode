@@ -1,0 +1,421 @@
+<template>
+  <Teleport to="body">
+    <div
+      v-if="everOpened"
+      v-show="open || leaving"
+      ref="overlayRef"
+      class="bs-overlay"
+      :class="[{ 'bs-leaving': leaving, 'bs-instant': instant, 'bs-transparent-overlay': transparentOverlay, 'bs-overlay-fullscreen': fullscreen, 'bs-overlay-wide-auto': isWideScreen }, $attrs.class]"
+      tabindex="-1"
+      @click.self="handleClose"
+      @keydown.escape="handleEscapeKey"
+    >
+      <div
+        class="bs-panel"
+        :class="[
+          { 'bs-leaving': leaving, 'bs-instant': instant, 'bs-auto': auto, 'bs-handle-only': handleOnly, 'bs-wide-auto': isWideScreen, 'bs-maximized': maximized },
+          panelClass
+        ]"
+      >
+        <!-- Header -->
+        <div v-if="!noHeader" class="bs-header" :class="{ 'bs-header-handle-only': handleOnly }" @click="handleClose">
+          <div class="bs-handle" />
+          <slot v-if="!handleOnly" name="header">
+            <span class="bs-title">{{ title }}</span>
+          </slot>
+        </div>
+        <!-- Body -->
+        <div class="bs-body">
+          <slot />
+        </div>
+        <!-- Footer slot -->
+        <footer v-if="$slots.footer" class="bs-footer">
+          <slot name="footer" />
+        </footer>
+      </div>
+    </div>
+  </Teleport>
+</template>
+
+<script setup>
+import { ref, watch, nextTick, onBeforeUnmount } from 'vue'
+import { registerBackHandler, PRIORITY_OVERLAY } from '@/composables/useBackHandler'
+import { getWideScreenState } from '@/composables/useWideScreenLayout'
+import '@/assets/modal-footer-btn.css'
+
+const props = defineProps({
+  open: Boolean,
+  title: {
+    type: String,
+    default: '',
+  },
+  instant: Boolean,  // 立即关闭，无动画
+  auto: Boolean,     // 自适应模式，高度按内容需要，最大全屏
+  noHeader: Boolean, // 隐藏Header（含手柄）
+  handleOnly: Boolean, // 仅显示拖拽手柄，无标题栏
+  transparentOverlay: Boolean, // 透明遮罩（可点击关闭但可见底层内容）
+  fullscreen: Boolean, // 全屏模式，覆盖 app header，用于无 header 的页面（如终端）
+  /**
+   * 最大化：面板铺满可用高度，而非按内容自适应。
+   * 与 ModalDialog 的 fullHeight 对应（同一语义，两种容器）。
+   * 用于内容需要长期占满空间的抽屉（如搜索结果列表），
+   * 避免每次结果变化时面板高度跳动。
+   */
+  maximized: Boolean,
+  closeGuard: Boolean, // 阻止一切关闭操作（overlay点击/header点击/返回手势），用于内部有原生选择器等场景
+  backEvent: String, // 自定义"返回"手势发出的事件名（默认 close）。用于下钻抽屉：边缘内滑返回时发出指定事件而非关闭。
+  panelClass: {
+    type: [String, Array, Object],
+    default: '',
+  },
+})
+
+const emit = defineEmits(['close'])
+
+// Wide-screen detection mirrors useWideScreenLayout (physical-width aware, so
+// high-DPR tablets in landscape are constrained even when CSS width < 1024px).
+const { isWideScreen } = getWideScreenState()
+
+const leaving = ref(false)
+const everOpened = ref(false)
+const overlayRef = ref(null)
+let leaveTimer = null
+
+// ── Back handler: edge-swipe / Android back closes the topmost drawer ──
+// Module-level counter gives each BottomSheet instance a unique sequence number.
+// Higher sequence = more recently opened = topmost = closed first by back gesture.
+let _drawerSeq = 0
+function nextDrawerSeq() { return ++_drawerSeq }
+const instanceSeq = nextDrawerSeq()
+let unregisterBack = null
+
+watch(() => props.open, (val) => {
+  clearTimeout(leaveTimer)
+  if (val) {
+    everOpened.value = true
+    leaving.value = false
+    // Auto-focus overlay so Escape key works immediately
+    nextTick(() => {
+      overlayRef.value?.focus()
+    })
+    // Register back handler so edge-swipe / Android back closes this drawer
+    if (!props.closeGuard && !unregisterBack) {
+      registerDrawerBackHandler()
+    }
+  } else if (leaving.value) {
+    // Close triggered externally while animating — cancel animation, hide now
+    leaving.value = false
+  }
+  // Unregister back handler when drawer fully closes
+  if (!val && unregisterBack) {
+    unregisterBack()
+    unregisterBack = null
+  }
+}, { immediate: true })
+
+// Respond to dynamic closeGuard changes (e.g. when a native file picker
+// opens inside the drawer, we block all close attempts to prevent the
+// drawer from dismissing while the picker is active).
+watch(() => props.closeGuard, (guard) => {
+  if (guard && unregisterBack) {
+    unregisterBack()
+    unregisterBack = null
+  } else if (!guard && props.open && !unregisterBack) {
+    registerDrawerBackHandler()
+  }
+})
+
+function registerDrawerBackHandler() {
+  const id = `bs-drawer-${instanceSeq}`
+  const priority = PRIORITY_OVERLAY + instanceSeq * 0.001
+  unregisterBack = registerBackHandler({
+    id,
+    canGoBack: () => props.open && !leaving.value,
+    goBack: () => {
+      // Drill-down drawers may customize the back gesture to emit an event
+      // (e.g. "back") that returns to the parent drawer instead of closing.
+      if (props.backEvent) {
+        handleClose(props.backEvent)
+      } else {
+        handleClose()
+      }
+    },
+    priority,
+  })
+}
+
+onBeforeUnmount(() => {
+  if (unregisterBack) {
+    unregisterBack()
+    unregisterBack = null
+  }
+})
+
+function handleEscapeKey(e) {
+  // If focus is inside an input/textarea/contenteditable, blur first and
+  // move focus back to the overlay so the next ESC closes the drawer
+  const tag = e.target?.tagName
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || e.target?.isContentEditable) {
+    e.target.blur()
+    overlayRef.value?.focus()
+    return
+  }
+  handleClose()
+}
+
+function handleClose(eventName) {
+  // Click handlers pass the click Event as the first arg — normalize to 'close'.
+  if (typeof eventName !== 'string') eventName = 'close'
+  if (props.closeGuard) return
+  if (leaving.value) return
+  if (props.instant) {
+    emit(eventName)
+    return
+  }
+  leaving.value = true
+  leaveTimer = setTimeout(() => {
+    leaving.value = false
+    leaveTimer = null
+    emit(eventName)
+  }, 250)
+}
+
+defineExpose({
+  close: handleClose,
+})
+</script>
+
+<style>
+/* ── BottomSheet base styles ── */
+
+.bs-overlay {
+  position: fixed;
+  top: calc(var(--header-height) + var(--header-safe-area-top));
+  left: 0;
+  right: 0;
+  bottom: var(--dock-height, 0);
+  background: rgba(0, 0, 0, 0.5);
+  z-index: var(--z-overlay);
+  display: flex;
+  align-items: flex-end;
+  overflow: hidden;
+  animation: bs-fadeIn 0.2s ease;
+  outline: none;
+}
+
+.bs-overlay.bs-leaving {
+  animation: bs-fadeOut 0.25s ease forwards;
+}
+
+.bs-panel {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  top: 0;
+  background: var(--bg-secondary, #fff);
+  border-top: none;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.15);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: bs-slideUp 0.25s ease;
+}
+
+/* Auto mode - auto height based on content, max full screen */
+.bs-panel.bs-auto {
+  top: auto;
+  height: auto;
+  max-height: 100%;
+}
+
+/* Maximized: fill the available height instead of hugging the content. Pairs
+   with `auto` (the overlay is still bottom-anchored on narrow screens). Used by
+   panels whose content is a long, changing list — auto height would make the
+   sheet grow and shrink on every result update. */
+.bs-panel.bs-auto.bs-maximized {
+  height: 100%;
+}
+
+.bs-panel.bs-leaving {
+  animation: bs-slideDown 0.25s ease forwards;
+}
+
+.bs-panel.bs-auto .bs-body {
+  overflow-y: auto;
+}
+
+@keyframes bs-slideUp {
+  from { transform: translateY(100%); }
+  to   { transform: translateY(0); }
+}
+
+@keyframes bs-slideDown {
+  from { transform: translateY(0); }
+  to   { transform: translateY(100%); }
+}
+
+@keyframes bs-fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes bs-fadeOut {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+
+/* Instant close (no animation) */
+.bs-overlay.bs-instant {
+  animation: none;
+}
+
+.bs-panel.bs-instant {
+  animation: none;
+}
+
+.bs-overlay.bs-instant.bs-leaving {
+  display: none;
+}
+
+.bs-panel.bs-instant.bs-leaving {
+  display: none;
+}
+
+/* ── Unified Drawer Header ── */
+.bs-header {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding:0 var(--space-3);
+  height: var(--header-height);
+  border-bottom: none;
+  box-shadow: 0 1px 0 var(--border-color, #e5e5e5);
+  background: var(--bg-secondary, #f8f9fa);
+  flex-shrink: 0;
+  cursor: pointer;
+  position: relative;
+}
+
+/* Android-style drag handle */
+.bs-handle {
+  position: absolute;
+  top: 4px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 32px;
+  height: 4px;
+  border-radius: var(--radius-xs);
+  background: var(--text-muted, #bbb);
+  opacity: var(--opacity-muted);
+}
+
+/* Handle-only header — compact, no box-shadow, centered handle */
+.bs-header-handle-only {
+  justify-content: center;
+  height: 12px;
+  padding: 0;
+  box-shadow: none;
+}
+
+.bs-header-handle-only .bs-handle {
+  top: 4px;
+}
+
+.bs-header-icon {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-sm);
+  color: var(--accent-color, #0066cc);
+  background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.bs-header-title {
+  font-weight: var(--font-weight-semibold);
+  font-size: var(--font-size-lg);
+  color: var(--text-primary, #1a1a1a);
+  flex-shrink: 0;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.bs-header-description {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-size-sm);
+  color: var(--text-muted, #999);
+  white-space: nowrap;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+}
+
+/* ── Body ── */
+.bs-body {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* ── Footer ── */
+.bs-panel > .bs-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: var(--space-4) var(--space-6);
+  border-top: 1px solid var(--border-color, #e5e5e5);
+  flex-shrink: 0;
+  gap: var(--space-4);
+}
+
+/* Transparent overlay — clickable but see-through */
+.bs-overlay.bs-transparent-overlay {
+  background: transparent;
+}
+
+/* ── Fullscreen mode ── */
+/* Overlay covers entire viewport including app header; z-index above app header (1100) */
+.bs-overlay.bs-overlay-fullscreen {
+  top: 0;
+  bottom: 0;
+  z-index: var(--z-sheet);
+}
+
+/* ── Wide-screen auto mode: centered floating card ── */
+
+/* Reposition the panel as a centered card (shared layer provides the look) */
+.bs-panel.bs-wide-auto {
+  position: relative;
+  top: auto;
+  bottom: auto;
+  left: auto;
+  right: auto;
+}
+
+/* Hide drag handle in centered card mode */
+.bs-overlay.bs-overlay-wide-auto .bs-handle {
+  display: none;
+}
+
+/* Wide-screen + maximized: the centered card fills the available height. The
+   overlay already reserves vertical padding (modal-card.css), so 100% means
+   "as tall as the viewport allows" without overflowing. Mirrors
+   ModalDialog's .modal-full-height. */
+.bs-panel.bs-wide-auto.bs-maximized {
+  height: 100%;
+}
+
+/* Body: scrollable in centered card mode */
+.bs-panel.bs-wide-auto .bs-body {
+  overflow-y: auto;
+}
+</style>

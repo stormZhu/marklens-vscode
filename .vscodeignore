@@ -1,0 +1,9 @@
+node_modules/**
+src/**
+web/**
+test/**
+.vscode/**
+vite.config.ts
+vitest.config.ts
+tsconfig.json
+*.vsix

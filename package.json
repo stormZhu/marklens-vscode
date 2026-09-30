@@ -45,9 +45,24 @@
     ],
     "commands": [
       {
+        "command": "marklens.togglePreview",
+        "title": "MarkLens: Toggle Preview / Source Editor",
+        "icon": "$(open-preview)"
+      },
+      {
         "command": "marklens.openPreview",
         "title": "MarkLens: Open Markdown Preview",
         "icon": "$(open-preview)"
+      },
+      {
+        "command": "marklens.showSource",
+        "title": "MarkLens: Switch to Source Editor",
+        "icon": "$(code)"
+      },
+      {
+        "command": "marklens.toggleViewMode",
+        "title": "MarkLens: Toggle Rendered / Raw View in Preview",
+        "icon": "$(eye)"
       },
       {
         "command": "marklens.openPreviewToSide",
@@ -78,6 +93,11 @@
           "command": "marklens.openPreview",
           "when": "editorLangId == markdown",
           "group": "navigation@2"
+        },
+        {
+          "command": "marklens.showSource",
+          "when": "activeCustomEditorId == 'marklens.markdownPreview'",
+          "group": "navigation@1"
         }
       ],
       "explorer/context": [
@@ -95,9 +115,21 @@
     },
     "keybindings": [
       {
+        "command": "marklens.togglePreview",
+        "key": "ctrl+alt+m",
+        "mac": "cmd+alt+m",
+        "when": "editorLangId == markdown || activeCustomEditorId == 'marklens.markdownPreview' || activeWebviewPanelId == 'marklens.markdownSidePreview'"
+      },
+      {
+        "command": "marklens.toggleViewMode",
+        "key": "ctrl+alt+v",
+        "mac": "cmd+alt+v",
+        "when": "activeCustomEditorId == 'marklens.markdownPreview' || activeWebviewPanelId == 'marklens.markdownSidePreview'"
+      },
+      {
         "command": "marklens.openPreviewToSide",
-        "key": "ctrl+shift+k",
-        "mac": "cmd+shift+k",
+        "key": "ctrl+alt+k",
+        "mac": "cmd+alt+k",
         "when": "editorLangId == markdown"
       }
     ],

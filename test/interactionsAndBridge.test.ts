@@ -158,4 +158,59 @@ describe('Desktop Table Row Click-to-Expand & VSCode Webview Bridge', () => {
     expect(fileData.windowStart).toBe(1)
     expect(fileData.windowEnd).toBe(2)
   })
+
+  it('forwards host commands (toggleViewMode, switchToSource) via CustomEvent', () => {
+    const received: string[] = []
+    const listener = (e: Event) => {
+      received.push((e as CustomEvent<string>).detail)
+    }
+    window.addEventListener('clawbench-vscode-command', listener)
+    try {
+      handleHostMessage(
+        new MessageEvent('message', {
+          data: { type: 'command', command: 'toggleViewMode' },
+        }),
+      )
+      handleHostMessage(
+        new MessageEvent('message', {
+          data: { type: 'command', command: 'switchToSource' },
+        }),
+      )
+      expect(received).toEqual(['toggleViewMode', 'switchToSource'])
+    } finally {
+      window.removeEventListener('clawbench-vscode-command', listener)
+    }
+  })
+
+  it('dispatches clawbench-vscode-scroll-to-line on updateDocument targetLine and scrollToLine messages', () => {
+    const lines: number[] = []
+    const listener = (e: Event) => {
+      const detail = (e as CustomEvent<{ line: number }>).detail
+      lines.push(detail.line)
+    }
+    window.addEventListener('clawbench-vscode-scroll-to-line', listener)
+    try {
+      handleHostMessage(
+        new MessageEvent('message', {
+          data: {
+            type: 'updateDocument',
+            path: '/workspace/README.md',
+            content: '# Title',
+            targetLine: 42,
+          },
+        }),
+      )
+      handleHostMessage(
+        new MessageEvent('message', {
+          data: {
+            type: 'scrollToLine',
+            line: 108,
+          },
+        }),
+      )
+      expect(lines).toEqual([42, 108])
+    } finally {
+      window.removeEventListener('clawbench-vscode-scroll-to-line', listener)
+    }
+  })
 })

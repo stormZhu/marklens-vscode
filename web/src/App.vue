@@ -52,7 +52,7 @@
         <button
           class="file-header-btn"
           :class="{ active: viewMode === 'rendered' }"
-          :title="viewMode === 'rendered' ? t('file.header.sourceView') : t('file.header.renderedView')"
+          :title="(viewMode === 'rendered' ? t('file.header.sourceView') : t('file.header.renderedView')) + ' (⌘⌥V / Ctrl+Alt+V)'"
           @click.stop="toggleViewMode"
         >
           <Eye :size="14" />
@@ -61,7 +61,7 @@
         <!-- Switch to Native VSCode Text Editor -->
         <button
           class="file-header-btn"
-          :title="t('file.header.edit') + ' (VSCode)'"
+          :title="t('file.header.edit') + ' (⌘⇧M / Ctrl+Shift+M)'"
           @click.stop="handleEditInVscode"
         >
           <Pencil :size="14" />
@@ -206,18 +206,25 @@
         @jump="handleTocJump"
       />
 
-      <div class="file-content" ref="fileContentRef">
-        <MarkdownPreview
-          v-if="viewMode === 'rendered'"
-          ref="mdPreviewRef"
-          :file="currentFile"
-          view-mode="rendered"
-          :search-open="searchOpen"
-          :word-wrap="wordWrap"
-          :show-line-numbers="showLineNumbers"
-          @close-search="searchOpen = false"
-        />
-        <div v-else class="raw-source-viewer" ref="rawContainerRef">
+      <div
+        class="file-content"
+        ref="fileContentRef"
+        @scroll.capture="onContentScroll"
+        @wheel.passive="onUserScrollInteract"
+        @touchmove.passive="onUserScrollInteract"
+      >
+        <div v-show="viewMode === 'rendered'" class="rendered-view-wrap">
+          <MarkdownPreview
+            ref="mdPreviewRef"
+            :file="currentFile"
+            view-mode="rendered"
+            :search-open="searchOpen"
+            :word-wrap="wordWrap"
+            :show-line-numbers="showLineNumbers"
+            @close-search="searchOpen = false"
+          />
+        </div>
+        <div v-show="viewMode === 'raw'" class="raw-source-viewer" ref="rawContainerRef">
           <CodePreviewBody
             status="ready"
             error-message-text=""
@@ -308,6 +315,7 @@ import { dirName } from '@/utils/path'
 import { highlightCode } from '@/utils/globals'
 import { splitHighlightedHtml } from '@/utils/codeLinkPreview'
 import { flashElement } from '@/utils/domFlash'
+import { collectLineBlocks, findBlockAtOrBefore } from '@/utils/scrollRenderedToLine'
 
 const { t } = useI18n()
 const { currentLocale, toggleLocale } = useLocale()
@@ -322,6 +330,7 @@ const refreshing = ref(false)
 const exporting = ref(false)
 const pathCopied = ref(false)
 
+const fileContentRef = ref<HTMLElement | null>(null)
 const mdPreviewRef = ref<InstanceType<typeof MarkdownPreview> | null>(null)
 const rawContainerRef = ref<HTMLElement | null>(null)
 
@@ -352,7 +361,7 @@ const sourceCodeLines = computed(() => {
   const rawLines = content.split('\n')
   const highlighted = splitHighlightedHtml(highlightCode(content, 'markdown'))
   return rawLines.map((rawText, idx) => ({
-    lineNumber: idx + 1,
+    lineNum: idx + 1,
     rawText,
     html: highlighted[idx] ?? '',
     isTarget: false,
@@ -431,13 +440,165 @@ function toggleSearch() {
   }
 }
 
+let lastViewModeToggleAt = 0
+let scrollReportTimer: ReturnType<typeof setTimeout> | null = null
+let pendingTargetLine: number | null = null
+
+function getRenderedScrollEl(): HTMLElement | null {
+  return (
+    mdPreviewRef.value?.bodyRef ??
+    (fileContentRef.value?.querySelector('.markdown-body') as HTMLElement | null)
+  )
+}
+
+function getRawScrollEl(): HTMLElement | null {
+  return (
+    (rawContainerRef.value?.querySelector('.code-preview-scroll') as HTMLElement | null) ??
+    rawContainerRef.value
+  )
+}
+
+function getCurrentTopSourceLine(): number | undefined {
+  const totalLines = Math.max(1, sourceCodeLines.value.length)
+  if (viewMode.value === 'rendered') {
+    const bodyEl = getRenderedScrollEl()
+    if (!bodyEl) return undefined
+    const scrollTop = bodyEl.scrollTop
+    if (scrollTop <= 2) return 1
+    const blocks = collectLineBlocks(bodyEl)
+    if (blocks.length > 0) {
+      let idx = 0
+      for (let i = 0; i < blocks.length; i++) {
+        if (blocks[i].top <= scrollTop + 2) idx = i
+        else break
+      }
+      const blk = blocks[idx]
+      const nextTop = idx + 1 < blocks.length ? blocks[idx + 1].top : bodyEl.scrollHeight
+      const endAttr = parseInt(blk.el.getAttribute('data-source-end') || '', 10)
+      const endLine =
+        Number.isFinite(endAttr) && endAttr >= blk.line
+          ? endAttr
+          : idx + 1 < blocks.length
+            ? Math.max(blk.line, blocks[idx + 1].line - 1)
+            : totalLines
+      const blockHeight = Math.max(1, nextTop - blk.top)
+      const offsetInBlock = Math.max(0, scrollTop - blk.top)
+      if (endLine > blk.line && offsetInBlock > 4) {
+        const frac = Math.min(1, offsetInBlock / blockHeight)
+        return Math.min(totalLines, Math.round(blk.line + frac * (endLine - blk.line)))
+      }
+      return blk.line
+    }
+    const maxScroll = bodyEl.scrollHeight - bodyEl.clientHeight
+    if (maxScroll > 0) {
+      return Math.max(1, Math.min(totalLines, Math.round(1 + (scrollTop / maxScroll) * (totalLines - 1))))
+    }
+    return 1
+  }
+
+  const rawEl = getRawScrollEl()
+  if (!rawEl) return undefined
+  const scrollTop = rawEl.scrollTop
+  if (scrollTop <= 2) return 1
+  const rows = rawEl.querySelectorAll<HTMLElement>('[data-line-number]')
+  for (const row of rows) {
+    if (row.offsetTop + row.offsetHeight > scrollTop + 2) {
+      const n = parseInt(row.getAttribute('data-line-number') || '', 10)
+      if (Number.isFinite(n) && n > 0) return n
+    }
+  }
+  return undefined
+}
+
+function scrollToSourceLine(line: number | undefined): boolean {
+  if (!line || line <= 0) return false
+  const totalLines = Math.max(1, sourceCodeLines.value.length)
+  const clampedLine = Math.max(1, Math.min(totalLines, line))
+
+  if (viewMode.value === 'rendered') {
+    const bodyEl = getRenderedScrollEl()
+    if (!bodyEl) return false
+    if (clampedLine <= 1) {
+      bodyEl.scrollTop = 0
+      postToHost({ type: 'updateScrollLine', line: 1 })
+      return true
+    }
+    const blocks = collectLineBlocks(bodyEl)
+    if (blocks.length > 0) {
+      const idx = findBlockAtOrBefore(blocks, clampedLine)
+      if (idx >= 0) {
+        const blk = blocks[idx]
+        const nextTop = idx + 1 < blocks.length ? blocks[idx + 1].top : bodyEl.scrollHeight
+        const endAttr = parseInt(blk.el.getAttribute('data-source-end') || '', 10)
+        const endLine =
+          Number.isFinite(endAttr) && endAttr >= blk.line
+            ? endAttr
+            : idx + 1 < blocks.length
+              ? Math.max(blk.line, blocks[idx + 1].line - 1)
+              : totalLines
+        let targetTop = blk.top
+        if (clampedLine > blk.line && endLine > blk.line && nextTop > blk.top) {
+          const frac = Math.min(1, (clampedLine - blk.line) / (endLine - blk.line))
+          targetTop = blk.top + frac * (nextTop - blk.top)
+        }
+        bodyEl.scrollTop = Math.max(0, targetTop)
+        postToHost({ type: 'updateScrollLine', line: clampedLine })
+        return true
+      }
+    }
+    return false
+  }
+
+  const rawEl = getRawScrollEl()
+  if (!rawEl) return false
+  if (clampedLine <= 1) {
+    rawEl.scrollTop = 0
+    postToHost({ type: 'updateScrollLine', line: 1 })
+    return true
+  }
+  const row = rawEl.querySelector<HTMLElement>(`[data-line-number="${clampedLine}"]`)
+  if (!row) return false
+  rawEl.scrollTop = Math.max(0, row.offsetTop)
+  postToHost({ type: 'updateScrollLine', line: clampedLine })
+  return true
+}
+
+function onUserScrollInteract() {
+  pendingTargetLine = null
+}
+
+function onContentScroll() {
+  if (scrollReportTimer) clearTimeout(scrollReportTimer)
+  scrollReportTimer = setTimeout(() => {
+    scrollReportTimer = null
+    const line = getCurrentTopSourceLine()
+    if (line && line > 0) {
+      postToHost({ type: 'updateScrollLine', line })
+    }
+  }, 80)
+}
+
 function toggleViewMode() {
+  const now = Date.now()
+  if (now - lastViewModeToggleAt < 150) return
+  lastViewModeToggleAt = now
+  const line = getCurrentTopSourceLine()
   viewMode.value = viewMode.value === 'rendered' ? 'raw' : 'rendered'
+  if (line && line > 0) {
+    pendingTargetLine = line
+    nextTick(() => {
+      scrollToSourceLine(line)
+      requestAnimationFrame(() => {
+        if (pendingTargetLine === line) {
+          scrollToSourceLine(line)
+        }
+      })
+    })
+  }
 }
 
 function handleEditInVscode() {
-  const scrollEntry = mdPreviewRef.value?.captureCurrentScrollState?.()
-  const line = scrollEntry && 'sourceLine' in scrollEntry ? scrollEntry.sourceLine : undefined
+  const line = getCurrentTopSourceLine()
   switchToNativeTextEditor(line)
 }
 
@@ -573,7 +734,7 @@ function onDocumentClick(e: MouseEvent) {
 }
 
 function onKeyDown(e: KeyboardEvent) {
-  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'f') {
+  if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'f') {
     if (viewMode.value === 'rendered') {
       e.preventDefault()
       searchOpen.value = true
@@ -581,6 +742,16 @@ function onKeyDown(e: KeyboardEvent) {
         mdPreviewRef.value?.focusSearchInput()
       })
     }
+    return
+  }
+  if ((e.metaKey || e.ctrlKey) && e.altKey && !e.shiftKey && (e.code === 'KeyV' || e.key.toLowerCase() === 'v')) {
+    e.preventDefault()
+    toggleViewMode()
+    return
+  }
+  if ((e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && (e.code === 'KeyM' || e.key.toLowerCase() === 'm')) {
+    e.preventDefault()
+    handleEditInVscode()
   }
 }
 
@@ -594,6 +765,10 @@ function onVscodeCommand(e: Event) {
     toggleSearch()
   } else if (cmd === 'openThemeMenu') {
     toggleThemeMenu()
+  } else if (cmd === 'toggleViewMode') {
+    toggleViewMode()
+  } else if (cmd === 'switchToSource') {
+    handleEditInVscode()
   }
 }
 
@@ -605,19 +780,46 @@ function onVscodeThemeUpdated() {
   applyActiveTheme()
 }
 
+function onVscodeScrollToLine(e: Event) {
+  const detail = (e as CustomEvent<{ line?: number }>).detail
+  const line = detail?.line
+  if (typeof line === 'number' && line > 0) {
+    pendingTargetLine = line
+    nextTick(() => {
+      scrollToSourceLine(line)
+      setTimeout(() => {
+        if (pendingTargetLine === line) {
+          scrollToSourceLine(line)
+        }
+      }, 120)
+    })
+  }
+}
+
+function onRealignScroll() {
+  if (pendingTargetLine && pendingTargetLine > 0) {
+    scrollToSourceLine(pendingTargetLine)
+  }
+}
+
 onMounted(() => {
   document.addEventListener('click', onDocumentClick)
   window.addEventListener('keydown', onKeyDown)
   window.addEventListener('clawbench-vscode-command', onVscodeCommand)
   window.addEventListener('clawbench-vscode-theme-updated', onVscodeThemeUpdated)
+  window.addEventListener('clawbench-vscode-scroll-to-line', onVscodeScrollToLine)
+  window.addEventListener('realign-file-scroll', onRealignScroll)
   postToHost({ type: 'webviewReady' })
 })
 
 onBeforeUnmount(() => {
+  if (scrollReportTimer) clearTimeout(scrollReportTimer)
   document.removeEventListener('click', onDocumentClick)
   window.removeEventListener('keydown', onKeyDown)
   window.removeEventListener('clawbench-vscode-command', onVscodeCommand)
   window.removeEventListener('clawbench-vscode-theme-updated', onVscodeThemeUpdated)
+  window.removeEventListener('clawbench-vscode-scroll-to-line', onVscodeScrollToLine)
+  window.removeEventListener('realign-file-scroll', onRealignScroll)
 })
 </script>
 
@@ -741,10 +943,11 @@ onBeforeUnmount(() => {
   position: relative;
 }
 
+.rendered-view-wrap,
 .raw-source-viewer {
   flex: 1 1 0;
   min-height: 0;
-  overflow: auto;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
 }

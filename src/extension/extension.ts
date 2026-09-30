@@ -57,10 +57,23 @@ interface ActivePreviewSession {
   panel: vscode.WebviewPanel
   sendDocumentUpdate: () => Promise<void>
   sendThemeUpdate: () => void
+  lastKnownLine?: number
+  ready?: boolean
 }
 
 const activeSessions = new Set<ActivePreviewSession>()
 let lastFocusedSession: ActivePreviewSession | null = null
+const pendingTargetLines = new Map<string, number>()
+
+function recordActiveEditorTopLine(targetUri: vscode.Uri): void {
+  const ed = vscode.window.activeTextEditor
+  if (!ed || ed.document.uri.toString() !== targetUri.toString()) return
+  const visibleTop = ed.visibleRanges[0]?.start.line
+  const line = typeof visibleTop === 'number' ? visibleTop + 1 : ed.selection.active.line + 1
+  if (line > 0) {
+    pendingTargetLines.set(targetUri.toString(), line)
+  }
+}
 
 function getVscodeColorKind(): 'light' | 'dark' {
   const kind = vscode.window.activeColorTheme.kind
@@ -174,11 +187,25 @@ function setupWebviewSession(
     .toString()
     .replace(/\/+$/, '')
 
+  const session: ActivePreviewSession = {
+    uri,
+    panel: webviewPanel,
+    sendDocumentUpdate: async () => {},
+    sendThemeUpdate: () => {},
+    ready: false,
+  }
+
   const sendDocumentUpdate = async () => {
     const content = await readDocumentContent(uri)
     const fileFsPath = uri.fsPath.replace(/\\/g, '/')
     const relPath = getRelativePath(fileFsPath, projectRoot)
     const locale = vscode.env.language.toLowerCase().startsWith('zh') ? 'zh' : 'en'
+    const key = uri.toString()
+    const targetLine = pendingTargetLines.get(key)
+    if (targetLine !== undefined) {
+      pendingTargetLines.delete(key)
+      session.lastKnownLine = targetLine
+    }
     void webviewPanel.webview.postMessage({
       type: 'updateDocument',
       path: fileFsPath,
@@ -191,6 +218,7 @@ function setupWebviewSession(
       themeSetting: getConfiguredTheme(),
       vscodeColorKind: getVscodeColorKind(),
       locale,
+      targetLine,
     })
   }
 
@@ -202,18 +230,26 @@ function setupWebviewSession(
     })
   }
 
-  const session: ActivePreviewSession = {
-    uri,
-    panel: webviewPanel,
-    sendDocumentUpdate,
-    sendThemeUpdate,
-  }
+  session.sendDocumentUpdate = sendDocumentUpdate
+  session.sendThemeUpdate = sendThemeUpdate
   activeSessions.add(session)
   lastFocusedSession = session
 
   webviewPanel.onDidChangeViewState((e) => {
     if (e.webviewPanel.active) {
       lastFocusedSession = session
+      if (session.ready) {
+        const key = uri.toString()
+        const targetLine = pendingTargetLines.get(key)
+        if (targetLine !== undefined) {
+          pendingTargetLines.delete(key)
+          session.lastKnownLine = targetLine
+          void webviewPanel.webview.postMessage({
+            type: 'scrollToLine',
+            line: targetLine,
+          })
+        }
+      }
     }
   })
 
@@ -228,7 +264,13 @@ function setupWebviewSession(
     if (!msg || typeof msg !== 'object') return
 
     if (msg.type === 'webviewReady' || msg.type === 'requestRefresh') {
+      session.ready = true
       await sendDocumentUpdate()
+      return
+    }
+
+    if (msg.type === 'updateScrollLine' && typeof msg.line === 'number' && msg.line > 0) {
+      session.lastKnownLine = msg.line
       return
     }
 
@@ -245,14 +287,9 @@ function setupWebviewSession(
     }
 
     if (msg.type === 'switchToTextEditor') {
-      const line = typeof msg.line === 'number' && msg.line > 0 ? msg.line : 1
-      const doc = await vscode.workspace.openTextDocument(uri)
-      const pos = new vscode.Position(Math.max(0, line - 1), 0)
-      const editor = await vscode.window.showTextDocument(doc, {
-        viewColumn: webviewPanel.viewColumn || vscode.ViewColumn.Active,
-        selection: new vscode.Range(pos, pos),
-      })
-      editor.revealRange(new vscode.Range(pos, pos), vscode.TextEditorRevealType.InCenter)
+      const line =
+        typeof msg.line === 'number' && msg.line > 0 ? msg.line : session.lastKnownLine || 1
+      await switchToDefaultTextEditor(uri, webviewPanel, line)
       return
     }
 
@@ -392,6 +429,48 @@ function resolveTargetMarkdownUri(explicitUri?: vscode.Uri): vscode.Uri | undefi
   return undefined
 }
 
+async function switchToDefaultTextEditor(
+  uri: vscode.Uri,
+  webviewPanel?: vscode.WebviewPanel,
+  line?: number,
+): Promise<void> {
+  const targetLine = typeof line === 'number' && line > 0 ? line : 1
+  const pos = new vscode.Position(Math.max(0, targetLine - 1), 0)
+  const range = new vscode.Range(pos, pos)
+  const viewColumn = webviewPanel?.viewColumn || vscode.ViewColumn.Active
+
+  try {
+    if (webviewPanel?.active) {
+      await vscode.commands.executeCommand('workbench.action.reopenTextEditor')
+    }
+    if (
+      !vscode.window.activeTextEditor ||
+      vscode.window.activeTextEditor.document.uri.toString() !== uri.toString()
+    ) {
+      await vscode.commands.executeCommand('vscode.openWith', uri, 'default', viewColumn)
+    }
+    const active = vscode.window.activeTextEditor
+    if (active && active.document.uri.toString() === uri.toString()) {
+      if (targetLine > 1) {
+        active.selection = range
+        active.revealRange(range, vscode.TextEditorRevealType.AtTop)
+      }
+      return
+    }
+  } catch {
+    // Fall back to showTextDocument below
+  }
+
+  const doc = await vscode.workspace.openTextDocument(uri)
+  const editor = await vscode.window.showTextDocument(doc, {
+    viewColumn,
+    selection: targetLine > 1 ? range : undefined,
+  })
+  if (targetLine > 1) {
+    editor.revealRange(range, vscode.TextEditorRevealType.AtTop)
+  }
+}
+
 function openStandalonePreviewPanel(
   context: vscode.ExtensionContext,
   uri: vscode.Uri,
@@ -423,13 +502,68 @@ export function activate(context: vscode.ExtensionContext): void {
 
   // 2. Register Commands
   context.subscriptions.push(
+    vscode.commands.registerCommand('marklens.togglePreview', async (uri?: vscode.Uri) => {
+      // If a native TextEditor is currently focused, switch it to MarkLens Preview
+      if (vscode.window.activeTextEditor) {
+        const target = uri || vscode.window.activeTextEditor.document.uri
+        recordActiveEditorTopLine(target)
+        await vscode.commands.executeCommand('vscode.openWith', target, VIEW_TYPE)
+        return
+      }
+      // If a MarkLens Preview panel is currently active, switch back to VSCode Source Editor
+      const session = lastFocusedSession || activeSessions.values().next().value
+      if (session) {
+        await switchToDefaultTextEditor(session.uri, session.panel, session.lastKnownLine)
+        return
+      }
+      if (uri) {
+        recordActiveEditorTopLine(uri)
+        await vscode.commands.executeCommand('vscode.openWith', uri, VIEW_TYPE)
+      }
+    }),
+  )
+
+  context.subscriptions.push(
     vscode.commands.registerCommand('marklens.openPreview', async (uri?: vscode.Uri) => {
+      // When triggered via shortcut (no explicit URI) while already in Preview, toggle back to Source
+      if (!uri && !vscode.window.activeTextEditor && lastFocusedSession?.panel.active) {
+        await switchToDefaultTextEditor(
+          lastFocusedSession.uri,
+          lastFocusedSession.panel,
+          lastFocusedSession.lastKnownLine,
+        )
+        return
+      }
       const target = resolveTargetMarkdownUri(uri)
       if (!target) {
         void vscode.window.showInformationMessage('Open a Markdown file first to preview it.')
         return
       }
+      recordActiveEditorTopLine(target)
       await vscode.commands.executeCommand('vscode.openWith', target, VIEW_TYPE)
+    }),
+  )
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('marklens.showSource', async (uri?: vscode.Uri) => {
+      const session = lastFocusedSession || activeSessions.values().next().value
+      const target = uri || session?.uri || vscode.window.activeTextEditor?.document.uri
+      if (!target) {
+        void vscode.window.showInformationMessage('No active Markdown file found.')
+        return
+      }
+      await switchToDefaultTextEditor(target, session?.panel, session?.lastKnownLine)
+    }),
+  )
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('marklens.toggleViewMode', () => {
+      const session = lastFocusedSession || activeSessions.values().next().value
+      if (!session) return
+      void session.panel.webview.postMessage({
+        type: 'command',
+        command: 'toggleViewMode',
+      })
     }),
   )
 
@@ -442,6 +576,7 @@ export function activate(context: vscode.ExtensionContext): void {
           void vscode.window.showInformationMessage('Open a Markdown file first to preview it.')
           return
         }
+        recordActiveEditorTopLine(target)
         openStandalonePreviewPanel(context, target, vscode.ViewColumn.Beside)
       },
     ),

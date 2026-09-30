@@ -441,6 +441,22 @@ export function handleHostMessage(event: MessageEvent): void {
     }
     bridgeReady.value = true
     window.dispatchEvent(new CustomEvent('clawbench-vscode-doc-updated', { detail: msg }))
+    if (typeof msg.targetLine === 'number' && msg.targetLine > 0) {
+      window.dispatchEvent(
+        new CustomEvent('clawbench-vscode-scroll-to-line', {
+          detail: { line: msg.targetLine },
+        }),
+      )
+    }
+    return
+  }
+
+  if (msg.type === 'scrollToLine' && typeof msg.line === 'number' && msg.line > 0) {
+    window.dispatchEvent(
+      new CustomEvent('clawbench-vscode-scroll-to-line', {
+        detail: { line: msg.line },
+      }),
+    )
     return
   }
 

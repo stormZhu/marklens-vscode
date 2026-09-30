@@ -41,6 +41,7 @@
         <div
           v-for="(line, idx) in codeLines"
           :key="line.lineNum"
+          :data-line-number="line.lineNum"
           class="code-preview-line-row"
           :class="{
             'is-target-line': line.isTarget,

@@ -20,13 +20,26 @@ Interactive, code-aware Markdown preview and custom editor for VSCode — featur
 - **36 Built-in Themes + Auto Follow VSCode**:
   - Defaults to `auto` (automatically switching between `github-light` and `github-dark` based on VSCode's active color theme), or choose from 36 built-in themes (`tokyo-night`, `catppuccin-mocha`, `dracula`, `one-dark-pro`, `nord`, `vitesse-dark`, `rose-pine`, etc.).
 
+## Keyboard Shortcuts & Commands
+
+| Action | Command ID | Default Shortcut (macOS) | Default Shortcut (Win/Linux) |
+|---|---|---|---|
+| **Toggle Preview ↔ Source Editor (In-Place)** | `marklens.togglePreview` | `Cmd+Shift+M` | `Ctrl+Shift+M` |
+| **Toggle Rendered ↔ Raw View (Inside Preview)** | `marklens.toggleViewMode` | `Cmd+Alt+V` | `Ctrl+Alt+V` |
+| **Open Preview to the Side** | `marklens.openPreviewToSide` | `Cmd+Shift+K` | `Ctrl+Shift+K` |
+| **Open Markdown Preview** | `marklens.openPreview` | *(Customizable in `⌘K ⌘S`)* | *(Customizable in `Ctrl+K Ctrl+S`)* |
+| **Switch to Source Editor** | `marklens.showSource` | *(Customizable in `⌘K ⌘S`)* | *(Customizable in `Ctrl+K Ctrl+S`)* |
+| **In-Page Search (Inside Preview)** | — | `Cmd+F` | `Ctrl+F` |
+
 ## Usage
 
-1. **Open Preview to the Side**:
+1. **Toggle Preview / Source Mode In-Place**:
+   - Press `Cmd+Shift+M` (macOS) / `Ctrl+Shift+M` (Windows/Linux) in any Markdown file to switch between VSCode's native source editor and MarkLens Preview in the same tab.
+2. **Toggle Rendered / Raw Source View Inside Preview**:
+   - Press `Cmd+Alt+V` (macOS) / `Ctrl+Alt+V` (Windows/Linux) or click the Eye icon (`👁️`) in the preview top bar.
+3. **Open Preview to the Side**:
    - Press `Cmd+Shift+K` (macOS) / `Ctrl+Shift+K` (Windows/Linux) in any Markdown file, or click the **MarkLens: Open Markdown Preview to the Side** icon in the editor title bar.
-2. **Open as Custom Editor**:
-   - Right-click any `.md` file in the Explorer → **Open With...** → **MarkLens Markdown Preview** (or run command `MarkLens: Open Markdown Preview`).
-3. **Select Theme**:
+4. **Select Theme**:
    - Click the Palette icon in the preview top bar, or run command `MarkLens: Select Markdown Preview Theme`.
 
 ## Build & Development

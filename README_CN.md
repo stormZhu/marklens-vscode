@@ -116,6 +116,13 @@ npm run package:vsix
 
 ---
 
+## 🙏 鸣谢与借鉴说明
+
+MarkLens 在早期交互构想与部分设计思路上借鉴与参考了：
+- [clawbench](https://github.com/clawbench-dev/clawbench)（作者 [@xulongzhe](https://github.com/xulongzhe)，基于 MIT License 开源）。由衷感谢该优秀的开源项目及其设计思路！
+
+---
+
 ## 📄 开源许可证
 
 本项目基于 [MIT License](./LICENSE) 协议开源。

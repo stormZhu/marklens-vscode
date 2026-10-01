@@ -90,3 +90,12 @@ trae --install-extension ./marklens-0.1.0.vsix --force
 4. 选中项目根目录下的 `./marklens-0.1.0.vsix`。
 5. 安装完成后，在编辑器中按 `Cmd+Shift+P` / `Ctrl+Shift+P`，执行 **`Developer: Reload Window`** 重新加载窗口即可。
 
+## Acknowledgements
+
+MarkLens in its early design and interactive ideas is inspired by and references:
+- [clawbench](https://github.com/clawbench-dev/clawbench) by [@xulongzhe](https://github.com/xulongzhe) (MIT License) — thank you for the wonderful project and inspiration!
+
+## License
+
+This project is licensed under the [MIT License](./LICENSE).
+

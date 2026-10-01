@@ -3091,4 +3091,10 @@ export default {
     roleUser: 'User',
     roleAssistant: 'Reply',
   },
+  selectionToolbar: {
+    addToChat: 'Add to Chat',
+    editSource: 'Edit Source',
+    copy: 'Copy',
+    copied: 'Selected text copied',
+  },
 } as const

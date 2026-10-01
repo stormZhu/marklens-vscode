@@ -184,6 +184,11 @@
           "type": "boolean",
           "default": false,
           "description": "Enable clicking markdown table rows to show expanded row details in a modal. Default is false."
+        },
+        "marklens.selectionToolbar": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show floating action pill (Add to chat, Edit source, Copy) when selecting text in markdown preview. Default is true."
         }
       }
     }

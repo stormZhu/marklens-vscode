@@ -165,6 +165,16 @@ export function openExternalUrl(url: string): void {
   })
 }
 
+export function addToChat(text: string, startLine?: number, endLine?: number): void {
+  postToHost({
+    type: 'addToChat',
+    text,
+    startLine,
+    endLine,
+  })
+}
+
+
 /**
  * Convert `/api/fs/raw/...` or `/api/fs/thumb?...` URLs on live DOM elements
  * into VSCode Webview resource URIs so local images/audio/video render directly.

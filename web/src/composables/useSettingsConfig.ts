@@ -36,6 +36,7 @@ export const localConfig = reactive<Record<string, string | boolean | number | n
   headerShortcutTips: true,
   markdownCodeLinkPreview: true,
   tableRowExpand: false,
+  selectionToolbar: true,
 })
 
 if (typeof localStorage !== 'undefined') {

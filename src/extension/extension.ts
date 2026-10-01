@@ -395,6 +395,16 @@ function setupWebviewSession(
       return
     }
 
+    if (msg.type === 'addToChat' && typeof msg.text === 'string') {
+      await handleAddToChat(
+        uri,
+        msg.text,
+        typeof msg.startLine === 'number' ? msg.startLine : undefined,
+        typeof msg.endLine === 'number' ? msg.endLine : undefined,
+      )
+      return
+    }
+
     if (msg.type === 'rpcRequest') {
       const { reqId, method, params = {} } = msg
       try {
@@ -475,6 +485,65 @@ class MarkLensEditorProvider implements vscode.CustomTextEditorProvider {
   ): Promise<void> {
     setupWebviewSession(this.context, document.uri, webviewPanel)
   }
+}
+
+export async function handleAddToChat(
+  uri: vscode.Uri,
+  text: string,
+  startLine?: number,
+  endLine?: number,
+): Promise<boolean> {
+  const allCommands = await vscode.commands.getCommands(true)
+
+  // 1. Trae CN / Trae AI Chat
+  if (allCommands.includes('workbench.action.chat.icube.open')) {
+    try {
+      const sLine = typeof startLine === 'number' && startLine > 0 ? startLine : 1
+      const eLine = typeof endLine === 'number' && endLine >= sLine ? endLine : sLine
+      await vscode.commands.executeCommand('workbench.action.chat.icube.open', {
+        addToChat: true,
+        keepOpen: true,
+        docviewPayload: {
+          uri,
+          selection: {
+            startLineNumber: sLine,
+            startColumn: 1,
+            endLineNumber: eLine,
+            endColumn: 1,
+          },
+          markdownSelection: text,
+        },
+      })
+      return true
+    } catch (err) {
+      console.warn('[MarkLens] Failed to execute Trae chat command:', err)
+    }
+  }
+
+  // 2. Standard VS Code Copilot Chat (workbench.action.chat.open)
+  if (allCommands.includes('workbench.action.chat.open')) {
+    try {
+      const relPath = vscode.workspace.asRelativePath(uri)
+      const lineInfo = startLine
+        ? `:${startLine}${endLine && endLine !== startLine ? `-${endLine}` : ''}`
+        : ''
+      const query = `#file:${relPath}${lineInfo}\n${text}\n`
+      await vscode.commands.executeCommand('workbench.action.chat.open', { query })
+      return true
+    } catch (err) {
+      console.warn('[MarkLens] Failed to execute VSCode chat command:', err)
+    }
+  }
+
+  // 3. Fallback: Copy to clipboard and show information message
+  await vscode.env.clipboard.writeText(text)
+  const lineSuffix = startLine
+    ? ` (Lines ${startLine}${endLine && endLine !== startLine ? `-${endLine}` : ''})`
+    : ''
+  void vscode.window.showInformationMessage(
+    `Copied selected text${lineSuffix} to clipboard.`,
+  )
+  return true
 }
 
 function resolveTargetMarkdownUri(explicitUri?: vscode.Uri): vscode.Uri | undefined {

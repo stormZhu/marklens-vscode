@@ -37,6 +37,12 @@
     v-if="codeLinkPreview.enabled.value && viewMode === 'rendered'"
     :preview="codeLinkPreview"
   />
+
+  <!-- Floating Selection Toolbar (Add to chat, Edit source, Copy) -->
+  <SelectionToolbar
+    v-if="viewMode === 'rendered'"
+    :container-ref="bodyRef"
+  />
 </template>
 
 <script setup lang="ts">
@@ -79,6 +85,7 @@ import { captureMarkdownScroll } from '@/composables/useFileScrollRestore.ts'
 import { setFileScroll, type FileScrollEntry } from '@/utils/fileScrollCache.ts'
 import { handleShareLinkClick } from '@/share/shareLinks'
 import CodeLinkPreview from '@/components/file/CodeLinkPreview.vue'
+import SelectionToolbar from '@/components/file/SelectionToolbar.vue'
 import { resolveLocalMediaInContainer, openExternalUrl } from '@/bridge/vscodeBridge'
 import '@/assets/diff-marker.css'
 

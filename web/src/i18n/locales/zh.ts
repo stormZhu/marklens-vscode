@@ -3090,4 +3090,10 @@ export default {
     roleUser: '用户',
     roleAssistant: '助手',
   },
+  selectionToolbar: {
+    addToChat: '添加到对话',
+    editSource: '编辑源码',
+    copy: '复制',
+    copied: '已复制选中文本',
+  },
 } as const

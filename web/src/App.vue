@@ -1047,16 +1047,23 @@ onBeforeUnmount(() => {
   padding-bottom: 70vh !important;
 }
 
-/* Hide chat-only attach/quote actions inside the standalone VSCode Markdown preview */
-.code-block-attach-btn,
-.table-block-attach-btn,
-.image-block-attach-btn,
-.mermaid-attach-btn,
+/* Hide chat-only quote actions inside the standalone VSCode Markdown preview */
 .code-preview-btn.quote-btn,
 .code-preview-footer-btn.quote-btn,
 .code-preview-actions > button[title*="Quote"],
 .code-preview-actions > button[title*="引用"] {
   display: none !important;
+}
+
+/* Feedback on block attach buttons (Add to chat) */
+.code-block-attach-btn.is-attached,
+.table-block-attach-btn.is-attached,
+.image-block-attach-btn.is-attached,
+.mermaid-attach-badge.is-attached {
+  color: var(--accent-color, #3794ff) !important;
+  opacity: 1 !important;
+  transform: scale(1.15);
+  transition: transform 0.15s ease, color 0.15s ease;
 }
 
 /* Desktop table row click-to-expand affordance (only when enabled) */

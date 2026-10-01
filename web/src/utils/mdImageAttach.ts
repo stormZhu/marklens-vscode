@@ -3,59 +3,105 @@
  *
  * The file-preview pipeline lifts every image into a block-level
  * `.image-block-wrapper` figure whose header carries a paperclip
- * `.image-block-attach-btn` (view / attach / open — uniform across mobile and
- * PC; see createFixLocalImagePaths in useMarkdownRenderPipeline). Tapping it
- * attaches the image file to the chat as a reference attachment — mirroring
- * the desktop drag-out (`mdImageDrag.ts`) and the file-manager / file-header
- * attach actions.
- *
- * The button stops propagation so the click never reaches the lightbox's
- * document listener; the image body itself still opens the lightbox.
+ * `.image-block-attach-btn`. Tapping it sends the image (with markdown syntax
+ * and line range) to Trae / VS Code AI Chat.
  */
+
+import { isShareMode } from '@/share/shareMode'
+import { addToChat } from '@/bridge/vscodeBridge'
+import { mermaidFenceEndLine } from '@/utils/mdMermaidAttach'
 
 /** Selector of the injected attach button in the image block header. */
 export const MD_IMAGE_ATTACH_BADGE = '.image-block-attach-btn'
 
 export interface MdImageBadgeHit {
-  /** Decoded project-relative file path from the wrapped img's data-attach-src. */
+  /** Decoded project-relative file path if available. */
   path: string
   /** Wrapper element; its center is used as the fly-animation origin. */
   wrap: HTMLElement
+  /** Formatted markdown text representing this media block */
+  text: string
+  /** 1-based source line of the image block */
+  startLine?: number
+  /** 1-based end source line of the image block */
+  endLine?: number
 }
 
 /** Badge click / tap handling injected by callers (from useChatContext + useToast). */
 export interface MdImageAttachActions {
-  add: (path: string) => void
-  remove: (path: string) => void
-  has: (path: string) => boolean
-  toast: (msg: string, opts?: { icon?: string; type?: 'success' | 'error' | 'info'; duration?: number }) => void
+  add?: (path: string) => void
+  remove?: (path: string) => void
+  has?: (path: string) => boolean
+  toast?: (msg: string, opts?: { icon?: string; type?: 'success' | 'error' | 'info'; duration?: number }) => void
   /** i18n message keys resolved by the caller. */
-  messages: { added: string; removed: string }
+  messages?: { added: string; removed: string }
 }
 
 /**
- * Resolve a click/tap target to an attach-hit for a local image.
- * Returns null when the target is not the attach button, the image figure is
- * missing, or the wrapped image carries no data-attach-src (external / data:
- * images). The image itself sits inside `.image-block-wrapper > .lightbox-img-wrap`.
+ * Resolve a click/tap target to an attach-hit for an image block.
+ * Supports raster images, inline SVGs, and Mermaid diagrams.
  */
 export function resolveMdImageBadgeClick(e: Event): MdImageBadgeHit | null {
   const target = e.target as HTMLElement | null
   if (!target || !target.closest(MD_IMAGE_ATTACH_BADGE)) return null
+  if (isShareMode()) return null
+
   const wrap = target.closest<HTMLElement>('.image-block-wrapper')
-  const img = wrap?.querySelector<HTMLImageElement>('img.lightbox-img')
-  const path = img?.getAttribute('data-attach-src')
-  if (!wrap || !path) return null
-  return { path, wrap }
+  if (!wrap) return null
+
+  const mdBody = target.closest<HTMLElement>('.markdown-body')
+  const path = mdBody?.getAttribute('data-file-path') || ''
+
+  const img = wrap.querySelector<HTMLImageElement>('img.lightbox-img, img')
+  const mermaid = wrap.querySelector<HTMLElement>('div.mermaid')
+  const svg = wrap.querySelector<SVGElement>('svg.lightbox-svg')
+
+  let text = ''
+  let startLine: number | undefined
+  let endLine: number | undefined
+
+  if (img) {
+    const alt = img.getAttribute('alt') || ''
+    const attachSrc = img.getAttribute('data-attach-src')
+    const fullSrc = img.getAttribute('data-full-src')
+    const src = attachSrc || img.getAttribute('src') || fullSrc || ''
+    text = `![${alt}](${src})`
+
+    const lineAttr = wrap.getAttribute('data-source-line') || img.closest('[data-source-line]')?.getAttribute('data-source-line')
+    if (lineAttr) {
+      startLine = parseInt(lineAttr, 10)
+      const endAttr = wrap.getAttribute('data-source-end')
+      endLine = endAttr ? parseInt(endAttr, 10) : startLine
+    }
+  } else if (mermaid) {
+    const body = mermaid.getAttribute('data-mermaid') || mermaid.textContent || ''
+    text = `\`\`\`mermaid\n${body.trim()}\n\`\`\``
+    const lineAttr = mermaid.getAttribute('data-source-line') || wrap.getAttribute('data-source-line')
+    if (lineAttr) {
+      startLine = parseInt(lineAttr, 10)
+      const endAttr = mermaid.getAttribute('data-source-end')
+      endLine = endAttr ? parseInt(endAttr, 10) : mermaidFenceEndLine(startLine, body)
+    }
+  } else if (svg) {
+    text = svg.outerHTML || ''
+    const lineAttr = wrap.getAttribute('data-source-line')
+    if (lineAttr) {
+      startLine = parseInt(lineAttr, 10)
+      endLine = startLine
+    }
+  }
+
+  if (!text) return null
+  return { path, wrap, text, startLine, endLine }
 }
 
 /**
- * Toggle the image attachment and fire the chat fly-to-dock particle.
+ * Add the image / diagram to the AI chat (Trae / VS Code) with source line.
  * Returns true when the badge handled the event (caller should stopPropagation).
  */
 export function handleMdImageAttachClick(
   e: Event,
-  actions: MdImageAttachActions
+  actions?: MdImageAttachActions
 ): boolean {
   const hit = resolveMdImageBadgeClick(e)
   if (!hit) return false
@@ -63,29 +109,23 @@ export function handleMdImageAttachClick(
   e.preventDefault()
   e.stopPropagation()
 
-  if (actions.has(hit.path)) {
-    actions.remove(hit.path)
-    actions.toast(actions.messages.removed, { icon: '📎', type: 'info', duration: 1500 })
-  } else {
+  // 1. Send to host AI chat (Trae / VS Code Copilot / Clipboard fallback)
+  addToChat(hit.text, hit.startLine, hit.endLine)
+
+  // 2. Feedback toast & action callback if provided
+  if (actions?.toast) {
+    actions.toast(actions.messages?.added || '已添加到对话', { icon: '📎', type: 'success', duration: 1500 })
+  }
+  if (actions?.add && hit.path) {
     actions.add(hit.path)
-    actions.toast(actions.messages.added, { icon: '📎', type: 'success', duration: 1500 })
   }
 
-  // Fly-to-chat particle from the badge center (App listens; silent when the
-  // mobile chat dock is not on screen, e.g. wide-screen layout).
-  const rect = hit.wrap.getBoundingClientRect()
-  const from = rect.width > 0 && rect.height > 0
-    ? { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
-    : { x: rect.left, y: rect.top }
-  const dockChatBtn = document.querySelector('.dock-center')?.querySelector('.dock-btn')
-  const to = dockChatBtn?.getBoundingClientRect()
-  if (to) {
-    window.dispatchEvent(new CustomEvent('attach-to-chat', {
-      detail: {
-        from,
-        to: { x: to.left + to.width / 2, y: to.top + to.height / 2 },
-      },
-    }))
+  // 3. Visual button feedback
+  const target = e.target as HTMLElement | null
+  const btn = target?.closest<HTMLButtonElement>(MD_IMAGE_ATTACH_BADGE)
+  if (btn) {
+    btn.classList.add('is-attached')
+    setTimeout(() => btn.classList.remove('is-attached'), 1200)
   }
 
   return true

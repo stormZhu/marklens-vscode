@@ -146,8 +146,10 @@ export function annotateMediaBlocksIn(doc: Document): void {
             viewBtn.innerHTML = IMAGE_VIEW_ICON_SVG
             actions.appendChild(viewBtn)
 
-            if (isLocal && !shareMode) {
+            if (!shareMode) {
                 actions.appendChild(makeHeaderButton(doc, 'image-block-attach-btn', 'attach', 'chat.attach.attachImageToChat', ATTACH_BADGE_SVG))
+            }
+            if (isLocal && !shareMode) {
                 actions.appendChild(makeHeaderButton(doc, 'image-block-open-btn', 'open', 'imageBlock.openFile', FILE_OPEN_ICON_SVG))
             }
 
@@ -198,9 +200,9 @@ export function annotateMediaBlocksIn(doc: Document): void {
                 if (hostLine) p.setAttribute('data-source-line', hostLine)
                 for (const b of before) p.appendChild(b)
                 frag.appendChild(p)
-            } else if (hostLine) {
-                // No leading content: the figure becomes the block, so it owns
-                // the line (covers the solo-media case, where the <p> vanishes).
+            }
+            if (hostLine) {
+                // The figure carries the line so range references resolve correctly
                 wrapper.setAttribute('data-source-line', hostLine)
             }
             frag.appendChild(wrapper)
@@ -261,6 +263,11 @@ export function armMermaidFigure(container: HTMLElement, opts: { attach: boolean
 
     header.appendChild(actions)
     wrapper.appendChild(header)
+
+    const srcLine = container.getAttribute('data-source-line')
+    if (srcLine) wrapper.setAttribute('data-source-line', srcLine)
+    const srcEnd = container.getAttribute('data-source-end')
+    if (srcEnd) wrapper.setAttribute('data-source-end', srcEnd)
 
     container.parentNode.insertBefore(wrapper, container)
     wrapper.appendChild(container)

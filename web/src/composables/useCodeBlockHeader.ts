@@ -355,7 +355,7 @@ function escapeMarkdownCell(text: string): string {
  * Includes header separator row (:-:, :--, --: alignment) using the same
  * alignment hints as the rendered table's th elements when available.
  */
-function tableToMarkdown(table: HTMLTableElement): string {
+export function tableToMarkdown(table: HTMLTableElement): string {
     const thead = table.querySelector('thead')
     const headers: string[] = []
     const aligns: string[] = []

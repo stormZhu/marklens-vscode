@@ -14,6 +14,8 @@
  * in that the "path" is the markdown file and the identity includes the range.
  */
 
+import { addToChat } from '@/bridge/vscodeBridge'
+
 /** Selectors of the attach affordances injected around rendered diagrams:
  *  the header attach button (file-preview block header) and the legacy corner
  *  badge (kept for hand-built fixtures). */
@@ -94,12 +96,22 @@ export function handleMermaidAttachClick(e: Event, actions: MermaidAttachActions
   e.preventDefault()
   e.stopPropagation()
 
-  if (actions.has(hit.path, hit.startLine, hit.endLine)) {
-    actions.remove(hit.path, hit.startLine, hit.endLine)
-    actions.toast(actions.messages.removed, { icon: '📎', type: 'info', duration: 1500 })
-  } else {
+  const bodySource = hit.container.dataset.mermaid || hit.container.textContent || ''
+  const text = `\`\`\`mermaid\n${bodySource.trim()}\n\`\`\``
+  addToChat(text, hit.startLine, hit.endLine)
+
+  if (actions?.toast) {
+    actions.toast(actions.messages?.added || '已添加到对话', { icon: '📎', type: 'success', duration: 1500 })
+  }
+  if (actions?.add && hit.path) {
     actions.add(hit.path, hit.startLine, hit.endLine)
-    actions.toast(actions.messages.added, { icon: '📎', type: 'success', duration: 1500 })
+  }
+
+  const target = e.target as HTMLElement | null
+  const btn = target?.closest<HTMLButtonElement>(MERMAID_ATTACH_BADGE)
+  if (btn) {
+    btn.classList.add('is-attached')
+    setTimeout(() => btn.classList.remove('is-attached'), 1200)
   }
 
   const rect = hit.container.getBoundingClientRect()

@@ -6,16 +6,15 @@
  * with `data-source-line` / `data-source-end` (1-based inclusive source range,
  * see web/src/utils/markedConfig.ts). The header annotator (useCodeBlockHeader)
  * adds a paperclip `.code-block-attach-btn` / `.table-block-attach-btn` to each
- * block's header actions. Tapping it in a FILE-PREVIEW context (where an
- * ancestor `.markdown-body[data-file-path]` carries the md path) attaches that
- * line range as a reference — same composite-key model as the Mermaid badge.
- *
- * Chat / export / share render the same header markup, but the resolver requires
- * a `.markdown-body[data-file-path]` ancestor and a non-share page, so the
- * button is inert there (CSS also hides it outside file previews).
+ * block's header actions. Tapping it in a FILE-PREVIEW context attaches that
+ * line range to Trae / VS Code AI chat.
  */
 
 import { isShareMode } from '@/share/shareMode'
+import { addToChat } from '@/bridge/vscodeBridge'
+import { tableToMarkdown } from '@/composables/useCodeBlockHeader'
+import type { MermaidAttachActions as RangedAttachActions } from '@/utils/mdMermaidAttach'
+export type { RangedAttachActions }
 
 /** Selectors of the header attach buttons injected by useCodeBlockHeader. */
 export const BLOCK_ATTACH_BTN = '.code-block-attach-btn, .table-block-attach-btn'
@@ -31,70 +30,84 @@ export interface BlockRangeHit {
   endLine: number
   /** The block element (`pre` / `table`) whose center is the fly origin. */
   el: HTMLElement
+  /** Formatted markdown text representing this block */
+  text: string
+}
+
+/**
+ * Format a code block element (<pre>) as fenced markdown with language tag.
+ */
+export function getCodeBlockMarkdown(pre: HTMLElement): string {
+  const code = pre.querySelector('code')
+  let lang = ''
+  if (code) {
+    for (const cls of Array.from(code.classList)) {
+      if (cls.startsWith('language-')) {
+        lang = cls.slice(9)
+        break
+      }
+    }
+  }
+  const codeText = (code || pre).textContent || ''
+  const fence = codeText.includes('```') ? '````' : '```'
+  return `${fence}${lang}\n${codeText.replace(/\r?\n+$/, '')}\n${fence}`
 }
 
 /**
  * Resolve a click/tap target to a code/table range reference.
- * Returns null when not on an attach header button, the underlying block has no
- * source metadata, or there is no markdown file path ancestor (chat/export/share).
+ * Returns null when not on an attach header button, or in share mode.
  */
 export function resolveBlockAttachClick(e: Event): BlockRangeHit | null {
   const target = e.target as HTMLElement | null
   if (!target || !target.closest(BLOCK_ATTACH_BTN)) return null
   if (isShareMode()) return null
 
-  const mdBody = target.closest<HTMLElement>('.markdown-body[data-file-path]')
+  const mdBody = target.closest<HTMLElement>('.markdown-body')
   const path = mdBody?.getAttribute('data-file-path') || ''
-  if (!path) return null
 
   const wrapper = target.closest<HTMLElement>('.code-block-wrapper, .table-block-wrapper')
-  const el = wrapper?.querySelector<HTMLElement>('pre[data-source-line], table[data-source-line]')
+  const el = wrapper?.querySelector<HTMLElement>('pre, table')
   if (!el) return null
 
-  const startLine = parseInt(el.getAttribute('data-source-line') || '', 10)
-  const endRaw = el.getAttribute('data-source-end')
+  const startAttr = el.getAttribute('data-source-line') || wrapper?.getAttribute('data-source-line')
+  const startLine = startAttr ? parseInt(startAttr, 10) : 1
+  const endRaw = el.getAttribute('data-source-end') || wrapper?.getAttribute('data-source-end')
   const endLine = endRaw ? parseInt(endRaw, 10) : startLine
-  if (!Number.isFinite(startLine) || !Number.isFinite(endLine)) return null
 
   const kind: 'code' | 'table' = el.tagName === 'TABLE' ? 'table' : 'code'
-  return { kind, path, startLine, endLine, el }
+  const text = kind === 'table' ? tableToMarkdown(el as HTMLTableElement) : getCodeBlockMarkdown(el)
+
+  return { kind, path, startLine, endLine, el, text }
 }
 
-/** Ranged attach actions — same shape as the mermaid badge toggle. */
-import type { MermaidAttachActions as RangedAttachActions } from '@/utils/mdMermaidAttach'
-export type { RangedAttachActions }
 /**
- * Toggle the markdown range reference and fire the fly-to-chat particle.
+ * Add the code block or table to the AI chat (Trae / VS Code) with source line range.
  * Returns true when the button handled the event (caller stops propagation).
  */
-export function handleBlockAttachClick(e: Event, actions: RangedAttachActions): boolean {
+export function handleBlockAttachClick(e: Event, actions?: RangedAttachActions): boolean {
   const hit = resolveBlockAttachClick(e)
   if (!hit) return false
 
   e.preventDefault()
   e.stopPropagation()
 
-  if (actions.has(hit.path, hit.startLine, hit.endLine)) {
-    actions.remove(hit.path, hit.startLine, hit.endLine)
-    actions.toast(actions.messages.removed, { icon: '📎', type: 'info', duration: 1500 })
-  } else {
+  // 1. Post to host AI chat (Trae / VS Code Copilot / Clipboard fallback)
+  addToChat(hit.text, hit.startLine, hit.endLine)
+
+  // 2. Feedback toast & action callback if provided
+  if (actions?.toast) {
+    actions.toast(actions.messages?.added || '已添加到对话', { icon: '📎', type: 'success', duration: 1500 })
+  }
+  if (actions?.add && hit.path) {
     actions.add(hit.path, hit.startLine, hit.endLine)
-    actions.toast(actions.messages.added, { icon: '📎', type: 'success', duration: 1500 })
   }
 
-  const rect = hit.el.getBoundingClientRect()
-  const from = rect.width > 0 && rect.height > 0
-    ? { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
-    : { x: rect.left, y: rect.top }
-  const dockChatBtn = document.querySelector('.dock-center')?.querySelector('.dock-btn')
-  const to = dockChatBtn?.getBoundingClientRect()
-  if (to) {
-    window.dispatchEvent(new CustomEvent('attach-to-chat', {
-      detail: {
-        from,
-        to: { x: to.left + to.width / 2, y: to.top + to.height / 2 },
-      },
-    }))
+  // 3. Visual button feedback
+  const target = e.target as HTMLElement | null
+  const btn = target?.closest<HTMLButtonElement>(BLOCK_ATTACH_BTN)
+  if (btn) {
+    btn.classList.add('is-attached')
+    setTimeout(() => btn.classList.remove('is-attached'), 1200)
   }
 
   return true

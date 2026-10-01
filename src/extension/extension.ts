@@ -222,11 +222,17 @@ async function readDocumentContent(uri: vscode.Uri): Promise<string> {
   }
 }
 
+function getPreviewTitle(uri: vscode.Uri): string {
+  const filename = path.basename(uri.fsPath)
+  return `${filename} (Preview)`
+}
+
 function setupWebviewSession(
   context: vscode.ExtensionContext,
   uri: vscode.Uri,
   webviewPanel: vscode.WebviewPanel,
 ): void {
+  webviewPanel.title = getPreviewTitle(uri)
   const projectRoot = getWorkspaceRootForUri(uri)
   const localRoots: vscode.Uri[] = [
     vscode.Uri.joinPath(context.extensionUri, 'dist', 'webview'),
@@ -502,11 +508,24 @@ function setupWebviewSession(
   })
 }
 
-class MarkLensEditorProvider implements vscode.CustomTextEditorProvider {
+class MarkLensCustomDocument implements vscode.CustomDocument {
+  constructor(public readonly uri: vscode.Uri) {}
+  dispose(): void {}
+}
+
+class MarkLensEditorProvider implements vscode.CustomReadonlyEditorProvider<MarkLensCustomDocument> {
   constructor(private readonly context: vscode.ExtensionContext) {}
 
-  public async resolveCustomTextEditor(
-    document: vscode.TextDocument,
+  public openCustomDocument(
+    uri: vscode.Uri,
+    _openContext: vscode.CustomDocumentOpenContext,
+    _token: vscode.CancellationToken,
+  ): MarkLensCustomDocument {
+    return new MarkLensCustomDocument(uri)
+  }
+
+  public async resolveCustomEditor(
+    document: MarkLensCustomDocument,
     webviewPanel: vscode.WebviewPanel,
     _token: vscode.CancellationToken,
   ): Promise<void> {
@@ -670,7 +689,7 @@ function openStandalonePreviewPanel(
 ): void {
   const panel = vscode.window.createWebviewPanel(
     'marklens.markdownSidePreview',
-    `MarkLens: ${path.basename(uri.fsPath)}`,
+    getPreviewTitle(uri),
     viewColumn,
     {
       enableScripts: true,

@@ -2,7 +2,7 @@
   "name": "marklens",
   "displayName": "MarkLens",
   "description": "Interactive code-aware Markdown preview & custom editor for VSCode — automatic file-path detection & floating code preview card, code/table headers, KaTeX math, Mermaid diagrams, Lightbox zoom, TOC dock, table row modal, 36 themes, and standalone HTML export.",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "publisher": "marklens",
   "license": "MIT",
   "repository": {
@@ -198,6 +198,9 @@
     "build:webview": "vite build",
     "build": "npm run build:extension && npm run build:webview",
     "package:vsix": "npm run build && node scripts/package-vsix.mjs",
+    "install:local": "npm run package:vsix && node scripts/install-extension.mjs",
+    "install:trae": "npm run package:vsix && node scripts/install-extension.mjs trae",
+    "install:code": "npm run package:vsix && node scripts/install-extension.mjs code",
     "test": "vitest run"
   },
   "dependencies": {

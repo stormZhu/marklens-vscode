@@ -46,9 +46,9 @@
 
 | 操作说明 | 命令 ID | 默认快捷键 (macOS) | 默认快捷键 (Win/Linux) |
 |---|---|---|---|
-| **原地切换预览 ↔ 源码编辑** | `marklens.togglePreview` | `Cmd+Shift+M` | `Ctrl+Shift+M` |
+| **原地切换预览 ↔ 源码编辑** | `marklens.togglePreview` | `Cmd+Alt+M` | `Ctrl+Alt+M` |
 | **切换渲染视图 ↔ 纯文本源码** | `marklens.toggleViewMode` | `Cmd+Alt+V` | `Ctrl+Alt+V` |
-| **在侧边打开 Markdown 预览** | `marklens.openPreviewToSide` | `Cmd+Shift+K` | `Ctrl+Shift+K` |
+| **在侧边打开 Markdown 预览** | `marklens.openPreviewToSide` | `Cmd+Alt+K` | `Ctrl+Alt+K` |
 | **划选文字添加到 AI 对话** | — | `Cmd+U` | `Ctrl+U` |
 | **划选文字跳转源码行编辑** | — | `Enter` | `Enter` |
 | **预览页内查找** | — | `Cmd+F` | `Ctrl+F` |
@@ -60,44 +60,37 @@
 ## 🚀 使用指南
 
 1. **同标签页原地秒级切换预览/源码**：
-   - 在任意 Markdown 文件中按下 `Cmd+Shift+M`（macOS）/ `Ctrl+Shift+M`（Win/Linux），即可在原生编辑器与 MarkLens 预览之间无缝来回切换，光标与滚动位置自动平滑对齐。
+   - 在任意 Markdown 文件中按下 `Cmd+Alt+M`（macOS）/ `Ctrl+Alt+M`（Win/Linux），即可在原生编辑器与 MarkLens 预览之间无缝来回切换，光标与滚动位置自动平滑对齐。预览 Tab 标题清晰标注为 `${filename} (Preview)`，一目了然。
 2. **在预览中划词与 AI 对话**：
    - 鼠标划选一段文档或代码，上方即刻浮出小胶囊，按下 `Cmd+U` 或点击「✨ 添加到对话」，文本与带行号上下文将立即注入侧边栏对话框。
 3. **在侧边双栏对照查看**：
-   - 按下 `Cmd+Shift+K`（macOS）/ `Ctrl+Shift+K`（Win/Linux），或点击编辑器右上角的侧边分屏预览图标。
+   - 按下 `Cmd+Alt+K`（macOS）/ `Ctrl+Alt+K`（Win/Linux），或点击编辑器右上角的侧边分屏预览图标。
 4. **快速切换主题**：
    - 点击预览顶栏的调色盘图标，或在命令面板（`Cmd+Shift+P`）运行 `MarkLens: Select Markdown Preview Theme`。
 
 ---
 
-## 📦 安装方法
+## 🛠️ 本地开发与快速安装
 
-您可以直接从 [GitHub Releases 页面](https://github.com/stormZhu/marklens-vscode/releases) 下载最新的 `.vsix` 文件安装：
+### 🚀 一行命令自动打包与安装最新版
 
-### 1. 命令行快速安装
+在仓库根目录下运行：
 
 ```bash
-# 安装到 VS Code
-code --install-extension marklens-0.1.0.vsix --force
-
-# 安装到 Trae CN（国内版）
-trae-cn --install-extension marklens-0.1.0.vsix --force
-
-# 安装到 Trae（国际版）
-trae --install-extension marklens-0.1.0.vsix --force
+npm run install:local
 ```
 
-### 2. 图形界面安装 (GUI)
+该命令将全自动执行：
+1. 编译 Extension 与 Webview 最新源码；
+2. 打包生成最新 `.vsix` 文件；
+3. 自动探测当前系统中的编辑器（**Trae CN**、**VS Code**、**Cursor** 等）并执行 `--install-extension ... --force` 覆盖安装；
+4. 安装完成后，在编辑器中按 `Cmd+Shift+P` / `Ctrl+Shift+P` 执行 **`Developer: Reload Window`**（重载窗口）即可立即生效！
 
-1. 打开 VSCode 或 Trae 的**扩展视图**（快捷键 `Cmd+Shift+X` / `Ctrl+Shift+X`）。
-2. 点击扩展面板右上角的 `···`（更多操作）菜单。
-3. 选择 **从 VSIX 安装... (Install from VSIX...)**。
-4. 选中下载的 `marklens-0.1.0.vsix` 文件。
-5. 安装完成后，在编辑器中按 `Cmd+Shift+P` / `Ctrl+Shift+P`，执行 **`Developer: Reload Window`** 重新加载窗口即可使用。
+定向安装命令：
+- `npm run install:trae`：仅安装到当前系统的 Trae CN / Trae
+- `npm run install:code`：仅安装到当前系统的 VS Code
 
----
-
-## 🛠️ 本地开发与构建
+### 手动打包与安装
 
 ```bash
 # 1. 克隆仓库并安装依赖
@@ -112,7 +105,26 @@ npm test
 npm run package:vsix
 ```
 
-打包完成后将在项目根目录下生成最新的 `marklens-*.vsix` 安装文件。
+通过命令行手动安装生成的 `.vsix` 文件：
+
+```bash
+# 安装到 VS Code
+code --install-extension marklens-0.1.2.vsix --force
+
+# 安装到 Trae CN（国内版）
+trae-cn --install-extension marklens-0.1.2.vsix --force
+
+# 安装到 Trae（国际版）
+trae --install-extension marklens-0.1.2.vsix --force
+```
+
+### 图形界面安装 (GUI)
+
+1. 打开 VSCode 或 Trae 的**扩展视图**（快捷键 `Cmd+Shift+X` / `Ctrl+Shift+X`）。
+2. 点击扩展面板右上角的 `···`（更多操作）菜单。
+3. 选择 **从 VSIX 安装... (Install from VSIX...)**。
+4. 选中生成的 `marklens-0.1.2.vsix` 文件。
+5. 安装完成后，在编辑器中按 `Cmd+Shift+P` / `Ctrl+Shift+P`，执行 **`Developer: Reload Window`** 重新加载窗口即可使用。
 
 ---
 

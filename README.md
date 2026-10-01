@@ -29,9 +29,9 @@ Interactive, code-aware Markdown preview and custom editor for VSCode & Trae —
 
 | Action | Command ID | Default Shortcut (macOS) | Default Shortcut (Win/Linux) |
 |---|---|---|---|
-| **Toggle Preview ↔ Source Editor (In-Place)** | `marklens.togglePreview` | `Cmd+Shift+M` | `Ctrl+Shift+M` |
+| **Toggle Preview ↔ Source Editor (In-Place)** | `marklens.togglePreview` | `Cmd+Alt+M` | `Ctrl+Alt+M` |
 | **Toggle Rendered ↔ Raw View (Inside Preview)** | `marklens.toggleViewMode` | `Cmd+Alt+V` | `Ctrl+Alt+V` |
-| **Open Preview to the Side** | `marklens.openPreviewToSide` | `Cmd+Shift+K` | `Ctrl+Shift+K` |
+| **Open Preview to the Side** | `marklens.openPreviewToSide` | `Cmd+Alt+K` | `Ctrl+Alt+K` |
 | **Add Selection to AI Chat** | — | `Cmd+U` | `Ctrl+U` |
 | **Edit Source at Selected Line** | — | `Enter` | `Enter` |
 | **Open Markdown Preview** | `marklens.openPreview` | *(Customizable in `⌘K ⌘S`)* | *(Customizable in `Ctrl+K Ctrl+S`)* |
@@ -41,15 +41,35 @@ Interactive, code-aware Markdown preview and custom editor for VSCode & Trae —
 ## Usage
 
 1. **Toggle Preview / Source Mode In-Place**:
-   - Press `Cmd+Shift+M` (macOS) / `Ctrl+Shift+M` (Windows/Linux) in any Markdown file to switch between VSCode's native source editor and MarkLens Preview in the same tab.
+   - Press `Cmd+Alt+M` (macOS) / `Ctrl+Alt+M` (Windows/Linux) in any Markdown file to switch between VSCode's native source editor and MarkLens Preview in the same tab. The preview tab title clearly shows `${filename} (Preview)`.
 2. **Toggle Rendered / Raw Source View Inside Preview**:
    - Press `Cmd+Alt+V` (macOS) / `Ctrl+Alt+V` (Windows/Linux) or click the Eye icon (`👁️`) in the preview top bar.
 3. **Open Preview to the Side**:
-   - Press `Cmd+Shift+K` (macOS) / `Ctrl+Shift+K` (Windows/Linux) in any Markdown file, or click the **MarkLens: Open Markdown Preview to the Side** icon in the editor title bar.
+   - Press `Cmd+Alt+K` (macOS) / `Ctrl+Alt+K` (Windows/Linux) in any Markdown file, or click the **MarkLens: Open Markdown Preview to the Side** icon in the editor title bar.
 4. **Select Theme**:
    - Click the Palette icon in the preview top bar, or run command `MarkLens: Select Markdown Preview Theme`.
 
-## Build & Packaging (构建与打包)
+## Local Development & Installation (本地构建与安装)
+
+### 🚀 One-Click Local Build & Install (一行命令自动打包与安装)
+
+In the repository directory, run:
+
+```bash
+npm run install:local
+```
+
+This single command will:
+1. Compile extension & webview bundle.
+2. Package the latest `.vsix` file.
+3. Auto-detect installed editors (**Trae CN**, **Visual Studio Code**, **Cursor**, etc.) and install the extension via `--install-extension ... --force`.
+4. Press `Cmd+Shift+P` (macOS) / `Ctrl+Shift+P` (Windows/Linux) -> `Developer: Reload Window` in your editor to apply immediately!
+
+Targeted install commands:
+- `npm run install:trae`: Target Trae CN / Trae only.
+- `npm run install:code`: Target Visual Studio Code only.
+
+### Manual Packaging & Installation (手动打包与安装)
 
 ```bash
 # 1. 安装依赖
@@ -58,37 +78,30 @@ npm install
 # 2. 运行单元测试
 npm test
 
-# 3. 编译并打包生成 VSIX 插件包（输出至项目根目录 ./marklens-0.1.0.vsix）
+# 3. 编译并打包生成 VSIX 插件包（输出至项目根目录 ./marklens-*.vsix）
 npm run package:vsix
 ```
 
-## Installation (安装插件)
-
-在项目根目录下，可通过命令行使用**项目相对路径**快速安装生成的 `.vsix` 文件：
-
-### 1. 安装到 VSCode
+通过命令行手动安装生成的 `.vsix` 文件：
 
 ```bash
-code --install-extension ./marklens-0.1.0.vsix --force
+# 安装到 VS Code
+code --install-extension ./marklens-0.1.2.vsix --force
+
+# 安装到 Trae CN（国内版）
+trae-cn --install-extension ./marklens-0.1.2.vsix --force
+
+# 安装到 Trae（国际版）
+trae --install-extension ./marklens-0.1.2.vsix --force
 ```
 
-### 2. 安装到 Trae CN / Trae
+### Graphical Installation (GUI)
 
-```bash
-# Trae CN（国内版）
-trae-cn --install-extension ./marklens-0.1.0.vsix --force
-
-# Trae（国际版）
-trae --install-extension ./marklens-0.1.0.vsix --force
-```
-
-### 3. 图形界面安装 (GUI)
-
-1. 打开 VSCode 或 Trae 的**扩展视图**（快捷键 `Cmd+Shift+X` / `Ctrl+Shift+X`）。
-2. 点击扩展面板右上角的 `···`（更多操作）菜单。
-3. 选择 **从 VSIX 安装... (Install from VSIX...)**。
-4. 选中项目根目录下的 `./marklens-0.1.0.vsix`。
-5. 安装完成后，在编辑器中按 `Cmd+Shift+P` / `Ctrl+Shift+P`，执行 **`Developer: Reload Window`** 重新加载窗口即可。
+1. Open VSCode or Trae **Extensions view** (`Cmd+Shift+X` / `Ctrl+Shift+X`).
+2. Click the `···` (Views and More Actions) menu in the top right.
+3. Select **Install from VSIX...**.
+4. Choose the generated `.vsix` file in the project root.
+5. Press `Cmd+Shift+P` / `Ctrl+Shift+P`, run **`Developer: Reload Window`** to activate.
 
 ## Acknowledgements
 

@@ -1,9 +1,14 @@
 # MarkLens — Interactive Markdown Preview for VSCode
 
-Interactive, code-aware Markdown preview and custom editor for VSCode — featuring automatic repository file-path detection & floating code slice preview, code/table action headers, KaTeX math, Mermaid diagrams, Lightbox zoom, resizable TOC dock, table row detail modal, 36 curated themes, and standalone HTML export.
+[English](./README.md) | [简体中文](./README_CN.md)
+
+Interactive, code-aware Markdown preview and custom editor for VSCode & Trae — featuring floating text selection toolbar (`Add to Chat ⌘U`, `Edit Source ⏎`, `Copy`), block attach-to-chat buttons, automatic repository file-path detection & floating code slice preview, code/table action headers, KaTeX math, Mermaid diagrams, Lightbox zoom, resizable TOC dock, table row detail modal, 36 curated themes, and standalone HTML export.
 
 ## Features
 
+- **AI-Powered Collaboration (Trae & GitHub Copilot)**:
+  - **Floating Selection Toolbar**: Select any text in the preview to pop up actions: `Add to Chat (⌘U / Ctrl+U)` to inject text with source file line numbers as a context chip into Trae / Copilot Chat, `Edit Source (⏎)` to jump directly to the source line in VSCode editor, and `Copy`.
+  - **Block Action Attach Buttons**: Top-right corner paperclip (`📎`) buttons on **Code Blocks**, **Tables**, and **Images/Diagrams** to inject the block with exact source line range directly into AI conversation.
 - **Rich Markdown Rendering Pipeline**:
   - `protectMarkdown` → `marked` (source-line annotations + heading slugs) → `KaTeX` math formulas → `highlight.js` (~50 languages, dual light/dark theme coexistence) → `Mermaid` diagrams → media figure wrappers.
 - **Code Block & Table Block Header Bars**:
@@ -27,6 +32,8 @@ Interactive, code-aware Markdown preview and custom editor for VSCode — featur
 | **Toggle Preview ↔ Source Editor (In-Place)** | `marklens.togglePreview` | `Cmd+Shift+M` | `Ctrl+Shift+M` |
 | **Toggle Rendered ↔ Raw View (Inside Preview)** | `marklens.toggleViewMode` | `Cmd+Alt+V` | `Ctrl+Alt+V` |
 | **Open Preview to the Side** | `marklens.openPreviewToSide` | `Cmd+Shift+K` | `Ctrl+Shift+K` |
+| **Add Selection to AI Chat** | — | `Cmd+U` | `Ctrl+U` |
+| **Edit Source at Selected Line** | — | `Enter` | `Enter` |
 | **Open Markdown Preview** | `marklens.openPreview` | *(Customizable in `⌘K ⌘S`)* | *(Customizable in `Ctrl+K Ctrl+S`)* |
 | **Switch to Source Editor** | `marklens.showSource` | *(Customizable in `⌘K ⌘S`)* | *(Customizable in `Ctrl+K Ctrl+S`)* |
 | **In-Page Search (Inside Preview)** | — | `Cmd+F` | `Ctrl+F` |

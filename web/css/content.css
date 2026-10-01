@@ -10,6 +10,7 @@
     font-size: var(--font-size-md);
     border-radius: 0;
     background: transparent;
+    color: var(--text-primary);
     flex: 1;
     min-height: 0;
     overflow-y: auto;
@@ -96,6 +97,7 @@
     font-family: var(--font-mono);
     font-size: 0.875em;
     padding: 0.2em 0.4em;
+    color: var(--text-bold, var(--text-primary));
 }
 
 .markdown-body pre {

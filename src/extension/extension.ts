@@ -13,7 +13,7 @@ import {
 const VIEW_TYPE = 'marklens.markdownPreview'
 
 const ALL_THEMES = [
-  { id: 'auto', label: 'Auto (Follow VSCode Light / Dark)' },
+  { id: 'auto', label: 'Auto (Bluloco - Follow VSCode Light / Dark)' },
   { id: 'github-light', label: 'GitHub Light' },
   { id: 'github-dark', label: 'GitHub Dark' },
   { id: 'one-light', label: 'One Light' },
@@ -148,6 +148,33 @@ function getRelativePath(fileFsPath: string, projectRoot: string): string {
   return path.basename(normFile)
 }
 
+const DARK_THEME_IDS = new Set<string>([
+  'solarized-dark',
+  'monokai',
+  'material-darker',
+  'dark-plus',
+  'bluloco-dark',
+  'nord',
+  'everforest-dark',
+  'one-dark-pro',
+  'dracula',
+  'rose-pine',
+  'gruvbox-dark',
+  'solarized-deep',
+  'github-dark',
+  'catppuccin-mocha',
+  'vitesse-dark',
+  'tokyo-night',
+  'kanagawa',
+  'ayu-dark',
+  'night-owl',
+  'high-contrast-dark',
+])
+
+function isDarkTheme(themeId: string): boolean {
+  return DARK_THEME_IDS.has(themeId)
+}
+
 function buildWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): string {
   const webviewDist = vscode.Uri.joinPath(extensionUri, 'dist', 'webview')
   const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(webviewDist, 'webview.js'))
@@ -158,10 +185,10 @@ function buildWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): st
   const initialTheme =
     themeSetting === 'auto'
       ? colorKind === 'light'
-        ? 'github-light'
-        : 'github-dark'
+        ? 'bluloco-light'
+        : 'bluloco-dark'
       : themeSetting
-  const initialBase = colorKind
+  const initialBase = isDarkTheme(initialTheme) ? 'dark' : 'light'
 
   return `<!DOCTYPE html>
 <html lang="zh-CN" data-theme="${initialTheme}" data-theme-base="${initialBase}" data-hljs-theme="${initialBase}" data-vscode-color-kind="${colorKind}">

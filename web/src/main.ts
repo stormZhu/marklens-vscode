@@ -34,6 +34,7 @@ import { LongPressDirective } from './directives/longPress'
 import { configureMarkedRenderer } from './utils/markedConfig'
 import { installLocalMediaFallback } from './utils/localMediaFallback'
 import { resolveThemeId, applyThemeAttributes } from './utils/themeMeta'
+import { localConfig } from './composables/useSettingsConfig'
 import { installFetchInterceptor, handleHostMessage } from './bridge/vscodeBridge'
 
 installFetchInterceptor()
@@ -41,7 +42,13 @@ window.addEventListener('message', handleHostMessage)
 
 configureMarkedRenderer()
 installLocalMediaFallback()
-applyThemeAttributes(resolveThemeId('auto'))
+
+const docTheme = typeof document !== 'undefined' ? document.documentElement.getAttribute('data-theme') : null
+const configuredTheme = String(localConfig.theme ?? 'auto')
+const initialTheme = configuredTheme !== 'auto'
+  ? resolveThemeId(configuredTheme)
+  : (docTheme || resolveThemeId('auto'))
+applyThemeAttributes(initialTheme)
 
 const app = createApp(App)
 app.use(i18n)

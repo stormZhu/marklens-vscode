@@ -82,8 +82,8 @@ export function isDarkTheme(themeId: string): boolean {
 
 // ── Defaults ───────────────────────────────────────────────────────────────────
 
-export function getDefaultDarkTheme(): string { return 'github-dark' }
-export function getDefaultLightTheme(): string { return 'github-light' }
+export function getDefaultDarkTheme(): string { return 'bluloco-dark' }
+export function getDefaultLightTheme(): string { return 'bluloco-light' }
 
 // ── Resolution ─────────────────────────────────────────────────────────────────
 

@@ -2,7 +2,7 @@
   "name": "marklens",
   "displayName": "MarkLens",
   "description": "Interactive code-aware Markdown preview & custom editor for VSCode — automatic file-path detection & floating code preview card, code/table headers, KaTeX math, Mermaid diagrams, Lightbox zoom, TOC dock, table row modal, 36 themes, and standalone HTML export.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "marklens",
   "license": "MIT",
   "repository": {

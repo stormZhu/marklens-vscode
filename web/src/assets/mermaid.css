@@ -1,5 +1,9 @@
 /* ── Mermaid diagram: loading spinner, error, retry button ── */
 
+.mermaid {
+  color: var(--text-primary);
+}
+
 /* Loading spinner — shown while mermaid chunk is loading and rendering */
 .mermaid .mermaid-loading {
   display: flex;

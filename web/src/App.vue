@@ -100,11 +100,11 @@
                 @click="selectTheme('auto')"
               >
                 <span class="theme-swatch theme-swatch-auto" />
-                <span>Auto (VSCode)</span>
+                <span>{{ t('settings.items.themeAuto') }}</span>
                 <span v-if="selectedThemeSetting === 'auto'" class="wrap-check">✓</span>
               </button>
               <div class="dropdown-divider" />
-              <div class="theme-group-label">Light Themes</div>
+              <div class="theme-group-label">{{ t('settings.items.lightThemes') }}</div>
               <button
                 v-for="th in lightThemes"
                 :key="th.id"
@@ -122,7 +122,7 @@
                 <span v-if="selectedThemeSetting === th.id" class="wrap-check">✓</span>
               </button>
               <div class="dropdown-divider" />
-              <div class="theme-group-label">Dark Themes</div>
+              <div class="theme-group-label">{{ t('settings.items.darkThemes') }}</div>
               <button
                 v-for="th in darkThemes"
                 :key="th.id"
@@ -347,7 +347,7 @@ const fileContentRef = ref<HTMLElement | null>(null)
 const mdPreviewRef = ref<InstanceType<typeof MarkdownPreview> | null>(null)
 const rawContainerRef = ref<HTMLElement | null>(null)
 
-const currentThemeId = ref(document.documentElement.getAttribute('data-theme') || 'github-dark')
+const currentThemeId = ref(document.documentElement.getAttribute('data-theme') || 'bluloco-dark')
 provide('theme', readonly(currentThemeId))
 
 const selectedThemeSetting = computed(() => String(localConfig.theme ?? 'auto'))

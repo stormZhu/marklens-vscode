@@ -95,10 +95,10 @@ describe('Desktop Table Row Click-to-Expand & VSCode Webview Bridge', () => {
     expect(THEMES.length).toBe(36)
 
     document.documentElement.setAttribute('data-vscode-color-kind', 'light')
-    expect(resolveThemeId('auto')).toBe('github-light')
+    expect(resolveThemeId('auto')).toBe('bluloco-light')
 
     document.documentElement.setAttribute('data-vscode-color-kind', 'dark')
-    expect(resolveThemeId('auto')).toBe('github-dark')
+    expect(resolveThemeId('auto')).toBe('bluloco-dark')
 
     expect(resolveThemeId('tokyo-night')).toBe('tokyo-night')
     expect(resolveThemeId('catppuccin-latte')).toBe('catppuccin-latte')

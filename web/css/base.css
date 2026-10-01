@@ -36,6 +36,31 @@ html, body {
     transition: background var(--duration-slow), color var(--duration-slow);
 }
 
+/* ── VSCode Webview Host Isolation ──────────────────────────────────────────
+   VS Code automatically injects classes (body.vscode-light / body.vscode-dark)
+   and CSS variables (--vscode-textPreformat-foreground, --vscode-editor-*, etc.)
+   into the webview iframe.
+   When the user selects an explicit theme in MarkLens (e.g. a dark theme while
+   VS Code is light, or vice-versa), host variables would otherwise leak in:
+   e.g. body.vscode-light code inherits --vscode-textPreformat-foreground (#a31515 red).
+   We remap these host variables and body rules to track MarkLens's active theme. */
+body,
+body.vscode-light,
+body.vscode-dark,
+body.vscode-high-contrast,
+body.vscode-high-contrast-light {
+    background-color: var(--bg-primary);
+    color: var(--text-primary);
+    --vscode-editor-background: var(--bg-primary);
+    --vscode-editor-foreground: var(--text-primary);
+    --vscode-textLink-foreground: var(--accent-color);
+    --vscode-textLink-activeForeground: var(--accent-hover);
+    --vscode-textPreformat-foreground: var(--text-bold, var(--text-primary));
+    --vscode-textCodeBlock-background: var(--code-bg, var(--bg-tertiary));
+    --vscode-textBlockQuote-background: var(--bg-secondary);
+    --vscode-textBlockQuote-border: var(--border-color);
+}
+
 /* ── Custom wallpaper layer ──────────────────────────────────────────
    Mounted inside .app-container (fixed) so it only covers the authenticated
    main app — the login view (separate SPA subtree) is never behind it. The

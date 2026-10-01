@@ -1196,7 +1196,7 @@ export async function exportMarkdownToHtml(options: ExportOptions): Promise<Expo
         }
 
         // 8. Serialize CSS + KaTeX fonts + base typography.
-        const currentThemeId = document.documentElement.getAttribute('data-theme') || 'github-light'
+        const currentThemeId = document.documentElement.getAttribute('data-theme') || 'bluloco-light'
         const currentThemeBase = document.documentElement.getAttribute('data-theme-base') || (isDarkTheme(currentThemeId) ? 'dark' : 'light')
 
         // Wrap content in a .markdown-body root (same structure as MarkdownPreview).

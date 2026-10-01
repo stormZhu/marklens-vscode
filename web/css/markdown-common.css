@@ -92,14 +92,35 @@
 .markdown-body code,
 .chat-message.assistant code,
 .table-row-value code {
+    color: var(--text-bold, var(--text-primary));
     background: var(--bg-tertiary);
     border-radius: var(--radius-xs);
 }
 
+/* Specificity overrides to protect inline code from VSCode host styles (e.g. body.vscode-light code) */
+body.vscode-light .markdown-body code,
+body.vscode-dark .markdown-body code,
+body.vscode-high-contrast .markdown-body code,
+body.vscode-high-contrast-light .markdown-body code,
+.vscode-md-app .markdown-body code {
+    color: var(--text-bold, var(--text-primary));
+}
+
 /* User message inline code uses translucent overlay on blue background */
 .chat-message.user code {
+    color: inherit;
     background: rgba(0, 0, 0, 0.15);
     border-radius: var(--radius-xs);
+}
+
+/* Inline code inside links inherits the link color */
+.markdown-body a code,
+.chat-message.assistant a code,
+.table-row-value a code,
+body.vscode-light .markdown-body a code,
+body.vscode-dark .markdown-body a code,
+.vscode-md-app .markdown-body a code {
+    color: inherit;
 }
 
 /* Code Block */
@@ -194,7 +215,11 @@
 .markdown-body pre code,
 .chat-message.assistant pre code,
 .chat-message.user pre code,
-.table-row-value pre code {
+.table-row-value pre code,
+body.vscode-light .markdown-body pre code,
+body.vscode-dark .markdown-body pre code,
+.vscode-md-app .markdown-body pre code {
+    color: inherit;
     background: transparent;
     padding: 0;
 }

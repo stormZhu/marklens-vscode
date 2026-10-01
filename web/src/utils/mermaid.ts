@@ -60,8 +60,8 @@ let _initialized = false
 let _initPromise: Promise<void> | null = null
 
 /** Build mermaid initialize config for current theme */
-function mermaidConfig() {
-    const currentThemeId = document.documentElement.getAttribute('data-theme') || 'github-light'
+function mermaidConfig(themeId?: string) {
+    const currentThemeId = themeId || document.documentElement.getAttribute('data-theme') || 'bluloco-light'
     const theme = isDarkTheme(currentThemeId) ? 'dark' as const : 'default' as const
     // Mermaid renders its own SVG text, so it cannot inherit the page font.
     // Read the resolved --font-ui stack (set by fontConfig) so diagrams follow
@@ -88,10 +88,10 @@ function mermaidConfig() {
  * On theme change, mermaid is already loaded so this re-initializes with
  * the new theme. On first load, mermaid hasn't been loaded yet so we skip.
  */
-export async function initMermaid(): Promise<void> {
+export async function initMermaid(themeId?: string): Promise<void> {
     if (!_initialized) return
     const mermaid = await getMermaid()
-    mermaid.initialize(mermaidConfig())
+    mermaid.initialize(mermaidConfig(themeId))
 }
 
 /** Ensure mermaid is initialized (called lazily on first render) */

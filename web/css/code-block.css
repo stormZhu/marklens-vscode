@@ -58,7 +58,9 @@ pre.code-block-pre {
     background: var(--code-bg);
 }
 
-pre.code-block-pre code {
+pre.code-block-pre code,
+.vscode-md-app pre.code-block-pre code {
+    color: var(--text-primary);
     font-family: var(--font-mono);
     background: transparent;
     padding: 0;

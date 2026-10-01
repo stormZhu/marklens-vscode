@@ -180,4 +180,26 @@ describe('ClawBench Markdown Render Pipeline (1:1 Parity)', () => {
     expect(img?.getAttribute('data-attach-src')).toBe('docs/assets/arch.png')
     expect(img?.getAttribute('data-full-src')).toBe('/api/fs/raw/docs/assets/arch.png?t=12345')
   })
+
+  it('correctly renders inline code spans adjacent to tildes without swallowing opening backticks or corrupting subsequent HTML/code elements', () => {
+    const md = 'MarkLens 的 Markdown 渲染引擎已经在所有块级 HTML 元素（如 `<h1>`~`<h6>`、`<p>`、`<ul>`、`<pre>` 等）上通过 Marked 扩展注入了 `data-source-line` 属性。'
+    const { html } = buildMarkdownPreviewDom({
+      content: md,
+      path: 'docs/syntax.md',
+      projectRoot: '/workspace/project',
+    })
+
+    const container = document.createElement('div')
+    container.innerHTML = html
+
+    // Must NOT emit a code block wrapper for <pre>
+    expect(container.querySelector('.code-block-wrapper')).toBeNull()
+
+    // Must correctly render all inline codespans
+    const codeElements = Array.from(container.querySelectorAll('code')).map(el => el.textContent)
+    expect(codeElements).toEqual(['<h1>', '<h6>', '<p>', '<ul>', '<pre>', 'data-source-line'])
+
+    // Must contain the tilde range text
+    expect(container.textContent).toContain('<h1>~<h6>')
+  })
 })

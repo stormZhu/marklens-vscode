@@ -11,7 +11,7 @@ import { annotateWorktreePathsIn } from '@/composables/useWorktreeAnnotation.ts'
 import { annotateLocalhostUrlsIn } from '@/composables/useLocalhostAnnotation.ts'
 import { annotateExternalLinkTargetsIn } from '@/composables/useExternalLinkAnnotation.ts'
 import { store } from '@/stores/app.ts'
-import { resetHeadingIds } from '@/utils/markedConfig.ts'
+import { resetHeadingIds, configureMarkedRenderer } from '@/utils/markedConfig.ts'
 
 /**
  * Markdown渲染选项
@@ -269,7 +269,8 @@ export function renderMarkdown(
     //    to protect _ and * from emphasis parsing (issue #384)
     const { protected: protectedMarkdown, mathEntries } = protectMarkdown(leadingBlank + trimmed)
 
-    // 1. Parse markdown (reset heading ID counter for deduplication)
+    // 1. Parse markdown (ensure renderer is configured and reset heading ID counter for deduplication)
+    configureMarkedRenderer()
     resetHeadingIds()
     let html = marked.parse(protectedMarkdown) as string
 

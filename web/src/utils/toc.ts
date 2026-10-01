@@ -1,6 +1,8 @@
 // Table of Contents extraction utilities
 
 import { protectMarkdown } from '@/utils/markdownProtect.ts'
+import { flashElement } from '@/utils/domFlash.ts'
+import { stripLeadingNumbering } from '@/utils/doubleClickUtils.ts'
 
 export interface TocItem {
     level: number
@@ -16,6 +18,222 @@ export function slugify(text: string): string {
         .replace(/[^\w\u4e00-\u9fa5]+/g, '-')  // Keep Chinese, letters, digits, replace others with -
         .replace(/^-+|-+$/g, '');  // Remove leading/trailing dashes
 }
+
+/**
+ * Generate a GitHub Flavored Markdown (GFM) slug from text.
+ * Strips punctuation characters instead of converting them to dashes.
+ */
+export function gfmSlugify(text: string): string {
+    return text
+        .toLowerCase()
+        .trim()
+        .replace(/[^\w\u4e00-\u9fa5\s-]/g, '')
+        .replace(/\s+/g, '-')
+        .replace(/^-+|-+$/g, '')
+}
+
+/**
+ * Normalize a string for fuzzy anchor and heading matching.
+ * Converts to lowercase and removes all whitespace, dashes, and punctuation.
+ */
+export function normalizeForMatch(str: string): string {
+    if (!str) return ''
+    return str
+        .toLowerCase()
+        .replace(/[\s\-_#.:：、，。！？!?,;；"'`\(\)\[\]{}（）【】《》/\\|~^&*+=<>@%$]/g, '')
+        .trim()
+}
+
+/**
+ * Find the target element for an in-document anchor or TOC link.
+ *
+ * Supports:
+ * 1. Exact ID or name attribute matching.
+ * 2. Marked slug matching (slugify).
+ * 3. GFM / GitHub slug matching (punctuation stripped, e.g. `#一tui-的整体形态`).
+ * 4. Punctuation preserved slugs (e.g. `#一、tui-的整体形态`).
+ * 5. Full text matching against heading textContent (e.g. `[一、TUI 的整体形态](#...)`).
+ * 6. Stripped numbering match (e.g. `[TUI 的整体形态](#...)` -> `一、TUI 的整体形态`).
+ * 7. Duplicate headings disambiguation (e.g. `#section-2` or `#section-1`).
+ * 8. Substring fallback match.
+ */
+export function findAnchorTargetElement(
+    container: HTMLElement | null | undefined,
+    targetId: string,
+    linkText?: string,
+): HTMLElement | null {
+    if (!container) return null
+
+    let cleanId = targetId || ''
+    if (cleanId.startsWith('#')) cleanId = cleanId.slice(1)
+    try {
+        cleanId = decodeURIComponent(cleanId)
+    } catch {}
+    cleanId = cleanId.trim()
+
+    const trimmedLinkText = linkText?.trim() || ''
+    if (!cleanId && !trimmedLinkText) return null
+
+    // 1. Direct ID or name lookup
+    const queryByIdOrName = (id: string): HTMLElement | null => {
+        if (!id) return null
+        try {
+            const esc = CSS.escape(id)
+            return (
+                container.querySelector<HTMLElement>(`#${esc}`) ||
+                container.querySelector<HTMLElement>(`[id="${esc}"]`) ||
+                container.querySelector<HTMLElement>(`[name="${esc}"]`) ||
+                null
+            )
+        } catch {
+            const safe = id.replace(/["'\\]/g, '')
+            return (
+                container.querySelector<HTMLElement>(`[id="${safe}"]`) ||
+                container.querySelector<HTMLElement>(`[name="${safe}"]`) ||
+                null
+            )
+        }
+    }
+
+    if (cleanId) {
+        const direct = queryByIdOrName(cleanId)
+        if (direct) return direct
+
+        const markedSlug = slugify(cleanId)
+        if (markedSlug && markedSlug !== cleanId) {
+            const el = queryByIdOrName(markedSlug)
+            if (el) return el
+        }
+
+        const gfmSlug = gfmSlugify(cleanId)
+        if (gfmSlug && gfmSlug !== cleanId && gfmSlug !== markedSlug) {
+            const el = queryByIdOrName(gfmSlug)
+            if (el) return el
+        }
+    }
+
+    // 2. Scan all heading elements inside container
+    const headings = Array.from(
+        container.querySelectorAll<HTMLElement>('h1, h2, h3, h4, h5, h6')
+    )
+
+    if (headings.length === 0) {
+        if (cleanId) {
+            const normTarget = normalizeForMatch(cleanId)
+            if (normTarget) {
+                const allNamed = Array.from(container.querySelectorAll<HTMLElement>('[id], [name]'))
+                for (const el of allNamed) {
+                    const idVal = el.getAttribute('id') || el.getAttribute('name') || ''
+                    if (normalizeForMatch(idVal) === normTarget) return el
+                }
+            }
+        }
+        return null
+    }
+
+    // Check duplicate index suffix (e.g. "-1", "-2")
+    let indexSuffix = 1
+    let baseTargetId = cleanId
+    const suffixMatch = cleanId.match(/-(\d+)$/)
+    if (suffixMatch) {
+        indexSuffix = parseInt(suffixMatch[1], 10)
+        baseTargetId = cleanId.slice(0, suffixMatch.index)
+    }
+
+    const normTarget = normalizeForMatch(cleanId)
+    const normBaseTarget = normalizeForMatch(baseTargetId)
+    const normLink = normalizeForMatch(trimmedLinkText)
+    const cleanLink = stripLeadingNumbering(trimmedLinkText)
+    const normCleanLink = normalizeForMatch(cleanLink)
+    const cleanTarget = stripLeadingNumbering(baseTargetId)
+    const normCleanTarget = normalizeForMatch(cleanTarget)
+
+    // Pass 1: exact normalized match against ID or text
+    const matchingCandidates: HTMLElement[] = []
+
+    for (const h of headings) {
+        const hId = h.getAttribute('id') || ''
+        const hText = h.textContent?.trim() || ''
+        const normHId = normalizeForMatch(hId)
+        const normHText = normalizeForMatch(hText)
+        const normCleanHText = normalizeForMatch(stripLeadingNumbering(hText))
+
+        // Direct match against targetId
+        if (normTarget && (normHId === normTarget || normHText === normTarget)) {
+            return h
+        }
+
+        // Match against baseTarget or linkText or stripped numbering
+        const isBaseMatch =
+            (normBaseTarget && (normHId === normBaseTarget || normHText === normBaseTarget)) ||
+            (normLink && (normHText === normLink || normHId === normLink)) ||
+            (normCleanTarget && normCleanHText && normCleanHText === normCleanTarget) ||
+            (normCleanLink && normCleanHText && normCleanHText === normCleanLink)
+
+        if (isBaseMatch) {
+            matchingCandidates.push(h)
+        }
+    }
+
+    if (matchingCandidates.length > 0) {
+        if (suffixMatch) {
+            // In GFM, 2nd occurrence is -1, 3rd is -2, etc. (matchingCandidates[indexSuffix])
+            if (matchingCandidates[indexSuffix]) {
+                return matchingCandidates[indexSuffix]
+            }
+            // In marked, 2nd occurrence is -2, 3rd is -3, etc. (matchingCandidates[indexSuffix - 1])
+            if (matchingCandidates[indexSuffix - 1]) {
+                return matchingCandidates[indexSuffix - 1]
+            }
+        }
+        return matchingCandidates[0]
+    }
+
+    // Pass 2: Substring fallback
+    if (normTarget && normTarget.length >= 2) {
+        for (const h of headings) {
+            const hText = h.textContent?.trim() || ''
+            const normHText = normalizeForMatch(hText)
+            if (normHText.includes(normTarget) || normTarget.includes(normHText)) {
+                return h
+            }
+        }
+    }
+    if (normLink && normLink.length >= 2) {
+        for (const h of headings) {
+            const hText = h.textContent?.trim() || ''
+            const normHText = normalizeForMatch(hText)
+            if (normHText.includes(normLink) || normLink.includes(normHText)) {
+                return h
+            }
+        }
+    }
+
+    return null
+}
+
+/**
+ * Scroll a container to bring targetEl near the top with comfortable padding,
+ * and flash targetEl for visual feedback.
+ */
+export function scrollToTargetElement(
+    container: HTMLElement,
+    targetEl: HTMLElement,
+    topOffset = 16,
+): void {
+    if (container === document.documentElement || container === document.body) {
+        const tRect = targetEl.getBoundingClientRect()
+        const targetTop = window.scrollY + tRect.top - topOffset
+        window.scrollTo({ top: Math.max(0, targetTop), behavior: 'auto' })
+    } else {
+        const cRect = container.getBoundingClientRect()
+        const tRect = targetEl.getBoundingClientRect()
+        const targetScrollTop = container.scrollTop + (tRect.top - cRect.top) - topOffset
+        container.scrollTop = Math.max(0, targetScrollTop)
+    }
+    flashElement(targetEl)
+}
+
 
 export function extractToc(content: string, lang: string): TocItem[] {
     if (lang === 'markdown') return extractTocMarkdown(content)

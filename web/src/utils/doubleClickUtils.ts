@@ -35,7 +35,11 @@ export function slugifyForHeading(text: string): string {
  * Strip leading numbering from text.
  * E.g. "5. 第四部分" → "第四部分"
  * E.g. "3: Something" → "Something"
+ * E.g. "一、TUI 的整体形态" → "TUI 的整体形态"
  */
 export function stripLeadingNumbering(text: string): string {
-  return text.replace(/^[\d\s.、:：]+/, '').trim()
+  return text
+    .replace(/^[\d\s.、:：一二三四五六七八九十百千万IVXLCDMivxlcdm()（）[\]【】]+/, '')
+    .trim()
 }
+

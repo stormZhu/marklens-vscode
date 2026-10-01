@@ -4,6 +4,7 @@ import { flashElement } from '@/utils/domFlash'
 import { gt } from '@/composables/useLocale'
 import { usePlatformDetect } from '@/composables/usePlatformDetect'
 import { isExternalLink, isAnchorLink, slugifyForHeading, stripLeadingNumbering } from '@/utils/doubleClickUtils.ts'
+import { findAnchorTargetElement, scrollToTargetElement } from '@/utils/toc.ts'
 
 const BLOCK_SELECTORS = 'p, h1, h2, h3, h4, h5, h6, li, pre, blockquote, table, .mermaid'
 
@@ -146,65 +147,21 @@ export function useDoubleClickCopy(options?: DoubleClickCopyOptions) {
      * 处理锚点链接 (#xxx)
      */
     function handleHashLink(event: MouseEvent, href: string, anchor: HTMLAnchorElement): boolean {
-        // 解码 URL 编码的 href
         const targetId = decodeURIComponent(href.substring(1))
         const linkText = anchor.textContent?.trim() || ''
-        
-        // 先尝试直接查找 ID
-        let targetElement = document.querySelector(`[id="${CSS.escape(targetId)}"]`)
-        
-        // 如果找不到,尝试用 slugify 转换后查找
-        if (!targetElement) {
-            const slugifiedId = slugifyForHeading(targetId)
-            targetElement = document.querySelector(`[id="${CSS.escape(slugifiedId)}"]`)
-        }
-        
-        // 如果还是找不到,尝试通过链接文本匹配标题
-        if (!targetElement && linkText) {
-            const allHeadings = document.querySelectorAll('.markdown-body h1, .markdown-body h2, .markdown-body h3, .markdown-body h4, .markdown-body h5, .markdown-body h6')
-            for (const heading of allHeadings) {
-                const headingText = heading.textContent?.trim() || ''
-                // 精确匹配
-                if (headingText === linkText) {
-                    targetElement = heading
-                    break
-                }
-            }
-            
-            // 如果精确匹配失败,尝试去除序号后的匹配
-            if (!targetElement) {
-                // 去除开头的数字和标点,如 "5. 第四部分" -> "第四部分"
-                const cleanLinkText = stripLeadingNumbering(linkText)
-                for (const heading of allHeadings) {
-                    const headingText = heading.textContent?.trim() || ''
-                    if (headingText === cleanLinkText || headingText.includes(cleanLinkText)) {
-                        targetElement = heading
-                        break
-                    }
-                }
-            }
-        }
-        
+
+        const scrollContainer =
+            anchor.closest<HTMLElement>('.markdown-body') ||
+            document.querySelector<HTMLElement>('.markdown-body') ||
+            anchor.closest<HTMLElement>('.file-content') ||
+            document.documentElement
+
+        const targetElement = findAnchorTargetElement(scrollContainer, targetId, linkText)
+
         if (targetElement) {
-            // 阻止默认行为
             event.preventDefault()
-            
-            // 找到滚动容器
-            const scrollContainer = anchor.closest('.file-viewer-content') || 
-                                   anchor.closest('.markdown-body')?.parentElement ||
-                                   document.documentElement
-            
-            // 计算目标位置
-            const containerRect = scrollContainer.getBoundingClientRect()
-            const targetRect = targetElement.getBoundingClientRect()
-            const scrollTop = (scrollContainer as HTMLElement).scrollTop || 0
-            const targetTop = scrollTop + targetRect.top - containerRect.top - 20 // 20px offset
-            
-            // 瞬间滚动
-            scrollContainer.scrollTo({
-                top: targetTop
-            })
-            
+            event.stopPropagation()
+            scrollToTargetElement(scrollContainer, targetElement)
             return true
         }
 

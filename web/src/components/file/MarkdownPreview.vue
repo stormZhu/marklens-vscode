@@ -59,6 +59,7 @@ import { gt } from '@/composables/useLocale'
 import { store } from '@/stores/app.ts'
 import { dirName } from '@/utils/path.ts'
 import { flashElement } from '@/utils/domFlash'
+import { findAnchorTargetElement, scrollToTargetElement } from '@/utils/toc.ts'
 import { buildMarkdownPreviewDom } from '@/composables/useMarkdownRenderPipeline.ts'
 import { stampSvgFigures } from '@/utils/svgMediaFit.ts'
 import { useSettingsConfig } from '@/composables/useSettingsConfig.ts'
@@ -291,21 +292,29 @@ function handleClick(event: MouseEvent) {
         }
         return
     }
-    // In-page anchor links
-    const linkEl = target?.closest('a[href^="#"]')
+    // In-page anchor links (#section, #top, etc.)
+    const linkEl = target?.closest<HTMLAnchorElement>('a[href^="#"]')
     if (linkEl) {
         const href = linkEl.getAttribute('href') || ''
-        if (href.length > 1) {
-            const targetId = decodeURIComponent(href.slice(1))
-            const targetEl = bodyRef.value?.querySelector(`#${CSS.escape(targetId)}`)
-            if (targetEl) {
-                event.preventDefault()
-                event.stopPropagation()
-                targetEl.scrollIntoView({ behavior: 'auto', block: 'start' })
-                flashElement(targetEl)
+        const container = bodyRef.value
+        if (container) {
+            event.preventDefault()
+            event.stopPropagation()
+            if (href === '#' || href === '#top') {
+                container.scrollTop = 0
                 return
             }
+            if (href.length > 1) {
+                const targetId = decodeURIComponent(href.slice(1))
+                const linkText = linkEl.textContent?.trim() || ''
+                const targetEl = findAnchorTargetElement(container, targetId, linkText)
+                if (targetEl) {
+                    scrollToTargetElement(container, targetEl)
+                    return
+                }
+            }
         }
+        return
     }
     // External http/https/mailto links
     const extLinkEl = target?.closest<HTMLAnchorElement>('a[href]')

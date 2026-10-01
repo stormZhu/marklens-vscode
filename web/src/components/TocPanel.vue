@@ -34,7 +34,7 @@ import SearchInput from '@/components/common/SearchInput.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { useListNav } from '@/composables/useListNav'
 import { useListKeys } from '@/composables/useListKeys'
-import { extractToc, slugify } from '@/utils/toc.ts'
+import { extractToc, slugify, findAnchorTargetElement, scrollToTargetElement } from '@/utils/toc.ts'
 import { flashElement } from '@/utils/domFlash'
 import { protectMarkdown } from '@/utils/markdownProtect.ts'
 import { getFileType } from '@/utils/fileType.ts'
@@ -266,16 +266,20 @@ function scrollTo(item) {
     // A bare document.getElementById could hit the same id in another file
     // stacked underneath an overlay (FileOverlay nav stack), scrolling a hidden
     // container instead of the visible one.
-    const elById = findHeadingEl(item.id)
+    const elById = findHeadingEl(item.id, item.text)
     if (elById) {
-        elById.scrollIntoView({ behavior: 'auto', block: 'start' })
-        flashElement(elById)
+        const container = fileContainer()
+        if (container) {
+            scrollToTargetElement(container, elById)
+        } else {
+            elById.scrollIntoView({ behavior: 'auto', block: 'start' })
+            flashElement(elById)
+        }
         activeId.value = item.id
-        // The jump was handled right here (rendered markdown/PDF heading DOM),
-        // so the host is not going to see a `jump`/`jumpPage` event. Notify it
-        // that an item was activated anyway — e.g. a drawer host can dismiss
-        // itself while a persistent dock stays open.
         emit('activated', item.id)
+        if (item.line) {
+            emit('jump', item.line, item.id)
+        }
         return
     }
     if (item.line) {
@@ -288,17 +292,16 @@ function scrollTo(item) {
 }
 
 /** Resolve a heading anchor scoped to the file this TOC belongs to. */
-function findHeadingEl(id) {
-    if (!id) return null
+function findHeadingEl(id, text) {
+    if (!id && !text) return null
     // 1. Markdown rendered preview: the container exposes its source path.
     const container = fileContainer()
     if (container) {
-        const el = container.querySelector(`#${escId(id)}`)
+        const el = findAnchorTargetElement(container, id || '', text)
         if (el) return el
     }
-    // 2. Fallback: plain document lookup (CodeMirror views have no anchor DOM,
-    //    but headings in raw/other views may still match).
-    return document.getElementById(id)
+    // 2. Fallback: plain document lookup
+    return id ? document.getElementById(id) : null
 }
 
 /**
@@ -326,11 +329,14 @@ function escAttr(value) {
  */
 function fileContainer() {
     const filePath = props.file?.path
-    if (!filePath) return null
-    const containers = document.querySelectorAll(`[data-file-path="${escAttr(filePath)}"]`)
-    for (const c of containers) {
-        if (c instanceof HTMLElement) return c
+    if (filePath) {
+        const containers = document.querySelectorAll(`[data-file-path="${escAttr(filePath)}"]`)
+        for (const c of containers) {
+            if (c instanceof HTMLElement) return c
+        }
     }
+    const defaultBody = document.querySelector('.markdown-body')
+    if (defaultBody instanceof HTMLElement) return defaultBody
     return null
 }
 

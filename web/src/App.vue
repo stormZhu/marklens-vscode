@@ -218,6 +218,7 @@
         @wheel.passive="onUserScrollInteract"
         @touchmove.passive="onUserScrollInteract"
         @mousedown.capture="onContentMouseDown"
+        @click.capture="onContentClick"
       >
         <div v-show="viewMode === 'rendered'" class="rendered-view-wrap">
           <MarkdownPreview
@@ -322,6 +323,7 @@ import { dirName } from '@/utils/path'
 import { highlightCode } from '@/utils/globals'
 import { splitHighlightedHtml } from '@/utils/codeLinkPreview'
 import { flashElement } from '@/utils/domFlash'
+import { findAnchorTargetElement, scrollToTargetElement } from '@/utils/toc'
 import {
   collectLineBlocks,
   computeTopSourceLineFromBlocks,
@@ -582,6 +584,13 @@ function onContentMouseDown(e: MouseEvent) {
   }
 }
 
+function onContentClick(e: MouseEvent) {
+  const target = e.target as HTMLElement | null
+  if (target?.closest('a[href^="#"], .toc-dock, .toc-panel, .diff-marker')) {
+    onUserScrollInteract()
+  }
+}
+
 function reportCurrentScrollLine() {
   const line = getCurrentTopSourceLine()
   if (line && line > 0) {
@@ -689,20 +698,31 @@ async function handleExportHtml() {
 
 function handleTocJump(line: number, anchorId?: string) {
   onUserScrollInteract()
-  if (viewMode.value === 'rendered' && anchorId) {
-    const el = document.getElementById(anchorId)
-    if (el) {
-      el.scrollIntoView({ behavior: 'auto', block: 'start' })
-      flashElement(el)
-      return
+  if (viewMode.value === 'rendered') {
+    const bodyEl = getRenderedScrollEl()
+    if (bodyEl) {
+      let targetEl: HTMLElement | null = null
+      if (anchorId) {
+        targetEl = findAnchorTargetElement(bodyEl, anchorId)
+      }
+      if (!targetEl && line > 0) {
+        targetEl = bodyEl.querySelector<HTMLElement>(`[data-source-line="${line}"]`)
+      }
+      if (targetEl) {
+        scrollToTargetElement(bodyEl, targetEl)
+        return
+      }
+      if (line > 0) {
+        scrollToSourceLine(line)
+        return
+      }
     }
   }
   if (viewMode.value === 'raw' && line > 0) {
-    const row = rawContainerRef.value?.querySelector(`[data-line-number="${line}"]`)
-    if (row) {
-      row.scrollIntoView({ behavior: 'auto', block: 'center' })
-      flashElement(row)
-    }
+    scrollToSourceLine(line)
+    const rawEl = getRawScrollEl()
+    const row = rawEl?.querySelector<HTMLElement>(`[data-line-number="${line}"]`)
+    if (row) flashElement(row)
   }
 }
 

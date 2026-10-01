@@ -1,6 +1,6 @@
 import { reactive } from 'vue'
 import { resolveThemeId, applyThemeAttributes } from '@/utils/themeMeta'
-import { saveThemePreference } from '@/bridge/vscodeBridge'
+import { saveThemePreference, saveConfigPreference } from '@/bridge/vscodeBridge'
 
 const LOCAL_PREFIX = 'clawbench-settings-'
 
@@ -35,7 +35,35 @@ export const localConfig = reactive<Record<string, string | boolean | number | n
   uiScale: 1,
   headerShortcutTips: true,
   markdownCodeLinkPreview: true,
+  tableRowExpand: false,
 })
+
+if (typeof localStorage !== 'undefined') {
+  for (const key of Object.keys(localConfig)) {
+    try {
+      const raw = localStorage.getItem(LOCAL_PREFIX + key)
+      if (raw !== null) {
+        localConfig[key] = JSON.parse(raw)
+      }
+    } catch {
+      // ignore storage errors in restricted webviews
+    }
+  }
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('clawbench-vscode-config-updated', ((e: CustomEvent<{ key?: string; value?: unknown }>) => {
+    const detail = e.detail
+    if (detail && typeof detail.key === 'string' && detail.key in localConfig) {
+      localConfig[detail.key] = detail.value as any
+      try {
+        localStorage.setItem(LOCAL_PREFIX + detail.key, JSON.stringify(detail.value))
+      } catch {
+        // ignore
+      }
+    }
+  }) as EventListener)
+}
 
 export function setLocalConfig(key: string, value: string | boolean | number | null): void {
   localConfig[key] = value
@@ -52,6 +80,10 @@ export function setLocalConfig(key: string, value: string | boolean | number | n
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('clawbench-theme-change', { detail: resolved }))
     }
+  }
+
+  if (key === 'tableRowExpand') {
+    saveConfigPreference('tableRowExpand', value)
   }
 }
 

@@ -1,5 +1,5 @@
 <template>
-  <div class="markdown-preview">
+  <div class="markdown-preview" :class="{ 'table-row-expand-active': tableRowExpandEnabled }">
     <!-- Rendered markdown -->
     <div v-if="viewMode === 'rendered'" class="markdown-body" ref="bodyRef" :data-file-path="file?.path || ''" @click="handleClick" @mousedown="onTableMouseDown" @touchstart.passive="onTableTouchStart" @dragstart="onMarkdownDragStart" @dragend="onMarkdownDragEnd" @load.capture="onImageLoad">
       <div class="markdown-content" v-html="renderedHtml" />
@@ -20,6 +20,7 @@
 
   <!-- Table row expand modal -->
   <TableRowModal
+    v-if="tableRowExpandEnabled && tableRowModal"
     :data="tableRowModal"
     @close="closeTableRowModal"
     @prev="tableRowPrev"
@@ -39,7 +40,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, nextTick, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, nextTick, onBeforeUnmount } from 'vue'
 import { renderMermaidInElement } from '@/composables/useMarkdownRenderer.ts'
 import { usePlatformDetect } from '@/composables/usePlatformDetect.ts'
 import { useDoubleClickCopy } from '@/composables/useDoubleClickCopy.ts'
@@ -60,6 +61,7 @@ import { dirName } from '@/utils/path.ts'
 import { flashElement } from '@/utils/domFlash'
 import { buildMarkdownPreviewDom } from '@/composables/useMarkdownRenderPipeline.ts'
 import { stampSvgFigures } from '@/utils/svgMediaFit.ts'
+import { useSettingsConfig } from '@/composables/useSettingsConfig.ts'
 import { useTableRowExpand } from '@/composables/useTableRowExpand.ts'
 import TableRowModal from '@/components/common/TableRowModal.vue'
 import MarkdownSearchBar from '@/components/file/MarkdownSearchBar.vue'
@@ -109,7 +111,11 @@ interface PositionedMarker {
 const positionedMarkers = ref<PositionedMarker[]>([])
 
 const quoteQuestion = useQuoteQuestion()
-const { tableRowModal, closeTableRowModal, tableRowPrev, tableRowNext, handleTableRowClick, onTableMouseDown, onTableTouchStart } = useTableRowExpand()
+const { localConfig } = useSettingsConfig()
+const tableRowExpandEnabled = computed(() => localConfig.tableRowExpand === true)
+const { tableRowModal, closeTableRowModal, tableRowPrev, tableRowNext, handleTableRowClick, onTableMouseDown, onTableTouchStart } = useTableRowExpand({
+  enabled: () => tableRowExpandEnabled.value,
+})
 
 const { handleDblClick } = useDoubleClickCopy({
     lineSelector: '.code-line',
@@ -520,5 +526,9 @@ defineExpose({
     width: 20px;
     height: auto;
     z-index: 2;
+}
+
+.markdown-preview.table-row-expand-active .markdown-body tbody tr[data-row-idx] {
+    cursor: pointer;
 }
 </style>

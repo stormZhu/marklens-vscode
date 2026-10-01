@@ -14,8 +14,33 @@ describe('Desktop Table Row Click-to-Expand & VSCode Webview Bridge', () => {
     document.body.className = ''
   })
 
-  it('opens TableRowModal when clicking a table row on desktop', () => {
-    const { tableRowModal, handleTableRowClick, closeTableRowModal } = useTableRowExpand()
+  it('does not open TableRowModal by default when tableRowExpand is disabled', () => {
+    const { tableRowModal, handleTableRowClick, isEnabled } = useTableRowExpand()
+    expect(isEnabled.value).toBe(false)
+
+    const wrapper = document.createElement('div')
+    wrapper.innerHTML = `
+      <table data-table-idx="0">
+        <thead><tr><th>Path</th><th>Role</th></tr></thead>
+        <tbody>
+          <tr data-row-idx="0"><td>internal/agenttool</td><td>Core interface</td></tr>
+        </tbody>
+      </table>
+    `
+    const firstRowTd = wrapper.querySelector('tbody tr[data-row-idx="0"] td') as HTMLElement
+    const clickEvent = new MouseEvent('click', { bubbles: true })
+    Object.defineProperty(clickEvent, 'target', { value: firstRowTd })
+
+    const handled = handleTableRowClick(clickEvent)
+    expect(handled).toBe(false)
+    expect(tableRowModal.value).toBeNull()
+  })
+
+  it('opens TableRowModal when tableRowExpand is enabled', () => {
+    const { tableRowModal, handleTableRowClick, closeTableRowModal, isEnabled } = useTableRowExpand({
+      enabled: () => true,
+    })
+    expect(isEnabled.value).toBe(true)
 
     const wrapper = document.createElement('div')
     wrapper.innerHTML = `
@@ -42,8 +67,10 @@ describe('Desktop Table Row Click-to-Expand & VSCode Webview Bridge', () => {
     expect(tableRowModal.value).toBeNull()
   })
 
-  it('does not open TableRowModal when clicking an interactive file-path chip inside a cell', () => {
-    const { tableRowModal, handleTableRowClick } = useTableRowExpand()
+  it('does not open TableRowModal when clicking an interactive file-path chip inside a cell even when enabled', () => {
+    const { tableRowModal, handleTableRowClick } = useTableRowExpand({
+      enabled: () => true,
+    })
 
     const wrapper = document.createElement('div')
     wrapper.innerHTML = `

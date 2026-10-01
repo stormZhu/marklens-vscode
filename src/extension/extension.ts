@@ -258,6 +258,9 @@ function setupWebviewSession(
       vscodeColorKind: getVscodeColorKind(),
       locale,
       targetLine,
+      tableRowExpand: vscode.workspace
+        .getConfiguration('marklens')
+        .get<boolean>('tableRowExpand', false),
     })
   }
 
@@ -321,6 +324,13 @@ function setupWebviewSession(
       await vscode.workspace
         .getConfiguration('marklens')
         .update('theme', msg.theme, vscode.ConfigurationTarget.Global)
+      return
+    }
+
+    if (msg.type === 'saveConfigPreference' && typeof msg.key === 'string') {
+      await vscode.workspace
+        .getConfiguration('marklens')
+        .update(msg.key, msg.value, vscode.ConfigurationTarget.Global)
       return
     }
 
@@ -797,6 +807,18 @@ export function activate(context: vscode.ExtensionContext): void {
       if (e.affectsConfiguration('marklens.theme')) {
         for (const s of activeSessions) {
           s.sendThemeUpdate()
+        }
+      }
+      if (e.affectsConfiguration('marklens.tableRowExpand')) {
+        const val = vscode.workspace
+          .getConfiguration('marklens')
+          .get<boolean>('tableRowExpand', false)
+        for (const s of activeSessions) {
+          void s.panel.webview.postMessage({
+            type: 'updateConfig',
+            key: 'tableRowExpand',
+            value: val,
+          })
         }
       }
     }),

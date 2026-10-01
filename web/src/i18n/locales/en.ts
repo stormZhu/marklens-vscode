@@ -1456,6 +1456,7 @@ export default {
       renderedView: 'Rendered',
       wordWrap: 'Word Wrap',
       lineNumbers: 'Line Numbers',
+      tableRowExpand: 'Table Row Expand Modal',
       stickyScroll: 'Sticky Scroll',
       fileHistory: 'File history',
       shareExternal: 'Share',

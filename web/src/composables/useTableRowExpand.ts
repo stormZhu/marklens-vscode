@@ -1,18 +1,28 @@
-import { ref } from 'vue'
-import { parseTableDataFromElement, onTableMouseDown, onTableTouchStart, isTableDragClick } from '@/utils/tableRowExpand.ts'
+import { ref, computed } from 'vue'
+import { parseTableDataFromElement, onTableMouseDown as onTableMouseDownRaw, onTableTouchStart as onTableTouchStartRaw, isTableDragClick } from '@/utils/tableRowExpand.ts'
 import { usePlatformDetect } from '@/composables/usePlatformDetect.ts'
+import { useSettingsConfig } from '@/composables/useSettingsConfig.ts'
+
+export interface UseTableRowExpandOptions {
+  enabled?: () => boolean
+}
 
 /**
  * Composable for table row expand modal.
  * Provides modal state, navigation, drag guard, and a unified click handler.
  * Used by ChatMessageList, ToolDetailDrawer, TaskExecDetail, and MarkdownPreview.
  *
- * The row viewer is a mobile/touch feature: it only opens on non-PC devices.
- * On PC, table images open the lightbox directly via their expand icon instead.
+ * Gated by marklens.tableRowExpand (default false).
  */
-export function useTableRowExpand() {
+export function useTableRowExpand(options?: UseTableRowExpandOptions) {
   const tableRowModal = ref<{ headers: string[], rows: string[][], currentIndex: number } | null>(null)
   const { isPC } = usePlatformDetect()
+  const { localConfig } = useSettingsConfig()
+
+  const isEnabled = computed(() => {
+    if (options?.enabled) return options.enabled()
+    return localConfig.tableRowExpand === true
+  })
 
   function closeTableRowModal() {
     tableRowModal.value = null
@@ -33,9 +43,11 @@ export function useTableRowExpand() {
   /**
    * Handle a click event that may be on a table data row.
    * Returns true if a table row was clicked and the modal was opened.
-   * Returns false if the click was not on a table row (caller should continue event processing).
+   * Returns false if the click was not on a table row or feature is disabled.
    */
   function handleTableRowClick(event: MouseEvent | PointerEvent): boolean {
+    if (!isEnabled.value) return false
+
     const target = event.target as HTMLElement
     // Skip if click target is an interactive element inside the cell (the
     // figure header view button, so the Lightbox handler opens it), or a
@@ -60,8 +72,19 @@ export function useTableRowExpand() {
     return true
   }
 
+  function onTableMouseDown(event: MouseEvent) {
+    if (!isEnabled.value) return
+    onTableMouseDownRaw(event)
+  }
+
+  function onTableTouchStart(event: TouchEvent) {
+    if (!isEnabled.value) return
+    onTableTouchStartRaw(event)
+  }
+
   return {
     tableRowModal,
+    isEnabled,
     closeTableRowModal,
     tableRowPrev,
     tableRowNext,

@@ -150,6 +150,14 @@ export function saveThemePreference(theme: string): void {
   })
 }
 
+export function saveConfigPreference(key: string, value: unknown): void {
+  postToHost({
+    type: 'saveConfigPreference',
+    key,
+    value,
+  })
+}
+
 export function openExternalUrl(url: string): void {
   postToHost({
     type: 'openExternal',
@@ -437,8 +445,15 @@ export function handleHostMessage(event: MessageEvent): void {
     if (msg.vscodeColorKind === 'light' || msg.vscodeColorKind === 'dark') {
       documentState.vscodeColorKind = msg.vscodeColorKind
     }
-    if (msg.locale === 'zh' || msg.locale === 'en') {
+    if (typeof msg.locale === 'string' && (msg.locale === 'zh' || msg.locale === 'en')) {
       documentState.locale = msg.locale
+    }
+    if (typeof msg.tableRowExpand === 'boolean') {
+      window.dispatchEvent(
+        new CustomEvent('clawbench-vscode-config-updated', {
+          detail: { key: 'tableRowExpand', value: msg.tableRowExpand },
+        }),
+      )
     }
     bridgeReady.value = true
     window.dispatchEvent(new CustomEvent('clawbench-vscode-doc-updated', { detail: msg }))
@@ -449,6 +464,11 @@ export function handleHostMessage(event: MessageEvent): void {
         }),
       )
     }
+    return
+  }
+
+  if (msg.type === 'updateConfig' && typeof msg.key === 'string') {
+    window.dispatchEvent(new CustomEvent('clawbench-vscode-config-updated', { detail: msg }))
     return
   }
 

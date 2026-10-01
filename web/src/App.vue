@@ -184,6 +184,11 @@
                 <span>Code Link Preview</span>
                 <span v-if="codeLinkPreviewEnabled" class="wrap-check">✓</span>
               </button>
+              <button class="dropdown-item" @click="toggleTableRowExpand">
+                <Table :size="14" />
+                <span>{{ t('file.header.tableRowExpand') }}</span>
+                <span v-if="tableRowExpandEnabled" class="wrap-check">✓</span>
+              </button>
               <div class="dropdown-divider" />
               <button class="dropdown-item" @click="handleToggleLocale">
                 <Languages :size="14" />
@@ -287,6 +292,7 @@ import {
   Palette,
   Pencil,
   Search,
+  Table,
   TextWrap,
 } from 'lucide-vue-next'
 import FileIcon from '@/components/common/FileIcon.vue'
@@ -349,6 +355,7 @@ const darkThemes = computed(() => THEMES.filter(th => th.dark))
 const wordWrap = computed(() => localConfig.wordWrap !== false)
 const showLineNumbers = computed(() => localConfig.lineNumbers !== false)
 const codeLinkPreviewEnabled = computed(() => localConfig.markdownCodeLinkPreview !== false)
+const tableRowExpandEnabled = computed(() => localConfig.tableRowExpand === true)
 
 const currentFile = computed(() => ({
   name: documentState.name || 'README.md',
@@ -646,6 +653,10 @@ function toggleLineNumbers() {
 
 function toggleCodeLinkPreview() {
   setLocalConfig('markdownCodeLinkPreview', !codeLinkPreviewEnabled.value)
+}
+
+function toggleTableRowExpand() {
+  setLocalConfig('tableRowExpand', !tableRowExpandEnabled.value)
 }
 
 function handleToggleLocale() {
@@ -1028,8 +1039,9 @@ onBeforeUnmount(() => {
   display: none !important;
 }
 
-/* Desktop table row click-to-expand affordance */
-.markdown-body tbody tr[data-row-idx] {
+/* Desktop table row click-to-expand affordance (only when enabled) */
+:deep(.table-row-expand-active) .markdown-body tbody tr[data-row-idx],
+.table-row-expand-active .markdown-body tbody tr[data-row-idx] {
   cursor: pointer;
 }
 

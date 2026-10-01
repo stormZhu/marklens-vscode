@@ -179,6 +179,11 @@
             "high-contrast-dark"
           ],
           "description": "Color theme for MarkLens Markdown Preview. Set to 'auto' to automatically follow VSCode Light/Dark theme."
+        },
+        "marklens.tableRowExpand": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable clicking markdown table rows to show expanded row details in a modal. Default is false."
         }
       }
     }

@@ -1456,6 +1456,7 @@ export default {
       renderedView: '渲染',
       wordWrap: '自动换行',
       lineNumbers: '行号',
+      tableRowExpand: '表格行点击展开',
       stickyScroll: '粘性滚动',
       fileHistory: '文件历史',
       shareExternal: '分享',

@@ -52,27 +52,65 @@ const ALL_THEMES = [
   { id: 'high-contrast-dark', label: 'High Contrast Dark' },
 ]
 
+interface SavedEditorPosition {
+  topLine: number
+  cursorLine: number
+  cursorColumn: number
+  rawVisibleStartLine: number
+  exactPreviewLine: number
+  userScrolledInEditor?: boolean
+}
+
 interface ActivePreviewSession {
   uri: vscode.Uri
   panel: vscode.WebviewPanel
   sendDocumentUpdate: () => Promise<void>
   sendThemeUpdate: () => void
   lastKnownLine?: number
+  userScrolledInPreview?: boolean
   ready?: boolean
 }
 
 const activeSessions = new Set<ActivePreviewSession>()
 let lastFocusedSession: ActivePreviewSession | null = null
 const pendingTargetLines = new Map<string, number>()
+const savedEditorPositions = new Map<string, SavedEditorPosition>()
+let ignoreEditorEventsUntil = 0
 
 function recordActiveEditorTopLine(targetUri: vscode.Uri): void {
   const ed = vscode.window.activeTextEditor
-  if (!ed || ed.document.uri.toString() !== targetUri.toString()) return
-  const visibleTop = ed.visibleRanges[0]?.start.line
-  const line = typeof visibleTop === 'number' ? visibleTop + 1 : ed.selection.active.line + 1
-  if (line > 0) {
-    pendingTargetLines.set(targetUri.toString(), line)
+  const key = targetUri.toString()
+  if (!ed || ed.document.uri.toString() !== key) {
+    const prev = savedEditorPositions.get(key)
+    if (prev && !pendingTargetLines.has(key)) {
+      pendingTargetLines.set(key, prev.exactPreviewLine)
+    }
+    return
   }
+  const visibleTop0 = ed.visibleRanges[0]?.start.line ?? ed.selection.active.line
+  const topLine = visibleTop0 + 1
+  const cursorLine = ed.selection.active.line + 1
+  const cursorColumn = ed.selection.active.character
+
+  const prev = savedEditorPositions.get(key)
+  // If the user hasn't scrolled the editor since last reveal/open,
+  // keep the exact preview line and saved top line so Preview <-> Source has 0 drift.
+  const exactPreviewLine =
+    prev && !prev.userScrolledInEditor
+      ? prev.exactPreviewLine
+      : prev && prev.rawVisibleStartLine === visibleTop0
+        ? prev.exactPreviewLine
+        : topLine
+
+  savedEditorPositions.set(key, {
+    topLine: prev && !prev.userScrolledInEditor ? prev.topLine : topLine,
+    cursorLine,
+    cursorColumn,
+    rawVisibleStartLine: visibleTop0,
+    exactPreviewLine,
+    userScrolledInEditor: false,
+  })
+  pendingTargetLines.set(key, exactPreviewLine)
 }
 
 function getVscodeColorKind(): 'light' | 'dark' {
@@ -205,6 +243,7 @@ function setupWebviewSession(
     if (targetLine !== undefined) {
       pendingTargetLines.delete(key)
       session.lastKnownLine = targetLine
+      session.userScrolledInPreview = false
     }
     void webviewPanel.webview.postMessage({
       type: 'updateDocument',
@@ -244,6 +283,7 @@ function setupWebviewSession(
         if (targetLine !== undefined) {
           pendingTargetLines.delete(key)
           session.lastKnownLine = targetLine
+          session.userScrolledInPreview = false
           void webviewPanel.webview.postMessage({
             type: 'scrollToLine',
             line: targetLine,
@@ -271,6 +311,9 @@ function setupWebviewSession(
 
     if (msg.type === 'updateScrollLine' && typeof msg.line === 'number' && msg.line > 0) {
       session.lastKnownLine = msg.line
+      if (msg.userScrolled) {
+        session.userScrolledInPreview = true
+      }
       return
     }
 
@@ -287,9 +330,12 @@ function setupWebviewSession(
     }
 
     if (msg.type === 'switchToTextEditor') {
+      if (typeof msg.userScrolled === 'boolean') {
+        session.userScrolledInPreview = msg.userScrolled
+      }
       const line =
         typeof msg.line === 'number' && msg.line > 0 ? msg.line : session.lastKnownLine || 1
-      await switchToDefaultTextEditor(uri, webviewPanel, line)
+      await switchToDefaultTextEditor(uri, webviewPanel, line, session.userScrolledInPreview)
       return
     }
 
@@ -433,41 +479,81 @@ async function switchToDefaultTextEditor(
   uri: vscode.Uri,
   webviewPanel?: vscode.WebviewPanel,
   line?: number,
+  userScrolledInPreview?: boolean,
 ): Promise<void> {
-  const targetLine = typeof line === 'number' && line > 0 ? line : 1
-  const pos = new vscode.Position(Math.max(0, targetLine - 1), 0)
-  const range = new vscode.Range(pos, pos)
+  const key = uri.toString()
+  const saved = savedEditorPositions.get(key)
+  const session = Array.from(activeSessions).find(s => s.uri.toString() === key)
   const viewColumn = webviewPanel?.viewColumn || vscode.ViewColumn.Active
 
-  try {
-    if (webviewPanel?.active) {
+  ignoreEditorEventsUntil = Date.now() + 500
+
+  // 1. If user did NOT scroll in preview and the preview tab is currently active:
+  // Reopening text editor lets VSCode natively restore the exact pixel scroll, cursor, and selections with 0 drift!
+  // Do NOT execute revealRange or showTextDocument with selection, which cause line shifting/centering.
+  if (!userScrolledInPreview && webviewPanel?.active) {
+    try {
       await vscode.commands.executeCommand('workbench.action.reopenTextEditor')
-    }
-    if (
-      !vscode.window.activeTextEditor ||
-      vscode.window.activeTextEditor.document.uri.toString() !== uri.toString()
-    ) {
-      await vscode.commands.executeCommand('vscode.openWith', uri, 'default', viewColumn)
-    }
-    const active = vscode.window.activeTextEditor
-    if (active && active.document.uri.toString() === uri.toString()) {
-      if (targetLine > 1) {
-        active.selection = range
-        active.revealRange(range, vscode.TextEditorRevealType.AtTop)
+      if (saved) {
+        saved.userScrolledInEditor = false
+      }
+      if (session) {
+        session.userScrolledInPreview = false
       }
       return
+    } catch {
+      // Fall through to showTextDocument below if reopenTextEditor failed
     }
-  } catch {
-    // Fall back to showTextDocument below
   }
 
-  const doc = await vscode.workspace.openTextDocument(uri)
-  const editor = await vscode.window.showTextDocument(doc, {
-    viewColumn,
-    selection: targetLine > 1 ? range : undefined,
-  })
-  if (targetLine > 1) {
-    editor.revealRange(range, vscode.TextEditorRevealType.AtTop)
+  // 2. User scrolled in preview (or reopenTextEditor is unavailable):
+  // We need to switch to or reveal the native text editor at the target line.
+  if (webviewPanel?.active) {
+    try {
+      await vscode.commands.executeCommand('workbench.action.reopenTextEditor')
+    } catch {
+      // Fallback below
+    }
+  }
+
+  let active = vscode.window.activeTextEditor
+  if (!active || active.document.uri.toString() !== key) {
+    try {
+      await vscode.commands.executeCommand('vscode.openWith', uri, 'default', viewColumn)
+      active = vscode.window.activeTextEditor
+    } catch {
+      // Fall through to showTextDocument below
+    }
+  }
+
+  if (!active || active.document.uri.toString() !== key) {
+    const doc = await vscode.workspace.openTextDocument(uri)
+    active = await vscode.window.showTextDocument(doc, { viewColumn, preserveFocus: false })
+  }
+
+  if (active && active.document.uri.toString() === key) {
+    const targetLine =
+      typeof line === 'number' && line > 0
+        ? Math.max(1, Math.round(line))
+        : saved?.topLine ?? 1
+    const topPos = new vscode.Position(Math.max(0, targetLine - 1), 0)
+    const topRange = new vscode.Range(topPos, topPos)
+
+    active.selection = new vscode.Selection(topPos, topPos)
+    active.revealRange(topRange, vscode.TextEditorRevealType.AtTop)
+
+    savedEditorPositions.set(key, {
+      topLine: targetLine,
+      cursorLine: targetLine,
+      cursorColumn: 0,
+      rawVisibleStartLine: targetLine - 1,
+      exactPreviewLine: line ?? targetLine,
+      userScrolledInEditor: false,
+    })
+  }
+
+  if (session) {
+    session.userScrolledInPreview = false
   }
 }
 
@@ -513,7 +599,12 @@ export function activate(context: vscode.ExtensionContext): void {
       // If a MarkLens Preview panel is currently active, switch back to VSCode Source Editor
       const session = lastFocusedSession || activeSessions.values().next().value
       if (session) {
-        await switchToDefaultTextEditor(session.uri, session.panel, session.lastKnownLine)
+        await switchToDefaultTextEditor(
+          session.uri,
+          session.panel,
+          session.lastKnownLine,
+          session.userScrolledInPreview,
+        )
         return
       }
       if (uri) {
@@ -531,6 +622,7 @@ export function activate(context: vscode.ExtensionContext): void {
           lastFocusedSession.uri,
           lastFocusedSession.panel,
           lastFocusedSession.lastKnownLine,
+          lastFocusedSession.userScrolledInPreview,
         )
         return
       }
@@ -552,7 +644,12 @@ export function activate(context: vscode.ExtensionContext): void {
         void vscode.window.showInformationMessage('No active Markdown file found.')
         return
       }
-      await switchToDefaultTextEditor(target, session?.panel, session?.lastKnownLine)
+      await switchToDefaultTextEditor(
+        target,
+        session?.panel,
+        session?.lastKnownLine,
+        session?.userScrolledInPreview,
+      )
     }),
   )
 
@@ -623,6 +720,45 @@ export function activate(context: vscode.ExtensionContext): void {
         type: 'command',
         command: 'toggleToc',
       })
+    }),
+  )
+
+  // 2b. Track Markdown TextEditor scroll & cursor positions for seamless toggle
+  context.subscriptions.push(
+    vscode.window.onDidChangeTextEditorVisibleRanges((e) => {
+      if (Date.now() < ignoreEditorEventsUntil) return
+      const key = e.textEditor.document.uri.toString()
+      const ext = path.extname(e.textEditor.document.uri.fsPath).toLowerCase()
+      if (ext !== '.md' && ext !== '.markdown') return
+      const visibleTop0 = e.visibleRanges[0]?.start.line
+      if (typeof visibleTop0 !== 'number') return
+      const prev = savedEditorPositions.get(key)
+      if (prev && prev.rawVisibleStartLine === visibleTop0) return
+      const topLine = visibleTop0 + 1
+      const cursorLine = e.textEditor.selection.active.line + 1
+      const cursorColumn = e.textEditor.selection.active.character
+      savedEditorPositions.set(key, {
+        topLine,
+        cursorLine: prev?.cursorLine ?? cursorLine,
+        cursorColumn: prev?.cursorColumn ?? cursorColumn,
+        rawVisibleStartLine: visibleTop0,
+        exactPreviewLine: topLine,
+        userScrolledInEditor: true,
+      })
+    }),
+  )
+
+  context.subscriptions.push(
+    vscode.window.onDidChangeTextEditorSelection((e) => {
+      if (Date.now() < ignoreEditorEventsUntil) return
+      const key = e.textEditor.document.uri.toString()
+      const ext = path.extname(e.textEditor.document.uri.fsPath).toLowerCase()
+      if (ext !== '.md' && ext !== '.markdown') return
+      const prev = savedEditorPositions.get(key)
+      if (prev && e.selections[0]) {
+        prev.cursorLine = e.selections[0].active.line + 1
+        prev.cursorColumn = e.selections[0].active.character
+      }
     }),
   )
 

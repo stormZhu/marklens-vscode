@@ -8,8 +8,19 @@ beforeAll(() => {
 })
 
 describe('ClawBench Markdown Render Pipeline (1:1 Parity)', () => {
-  it('renders headings with slugified IDs and data-source-line attributes', () => {
-    const md = `# 5.1 工具体系总览\n\nSome paragraph text.\n\n## 5.2 Builtin 工具集`
+  it('renders headings, paragraphs, and list items with data-source-line and data-source-end attributes', () => {
+    const md = [
+      '# 5.1 工具体系总览',
+      '',
+      'Some paragraph text',
+      'spanning two lines.',
+      '',
+      '## 5.2 Builtin 工具集',
+      '',
+      '- First item',
+      '- Second item',
+      '  - Nested item',
+    ].join('\n')
     const { html } = buildMarkdownPreviewDom({
       content: md,
       path: 'docs/chapter5.md',
@@ -24,9 +35,19 @@ describe('ClawBench Markdown Render Pipeline (1:1 Parity)', () => {
     expect(h1?.getAttribute('data-source-line')).toBe('1')
     expect(h1?.textContent).toContain('5.1 工具体系总览')
 
+    const p = container.querySelector('p')
+    expect(p?.getAttribute('data-source-line')).toBe('3')
+    expect(p?.getAttribute('data-source-end')).toBe('4')
+
     const h2 = container.querySelector('h2')
     expect(h2).not.toBeNull()
-    expect(h2?.getAttribute('data-source-line')).toBe('5')
+    expect(h2?.getAttribute('data-source-line')).toBe('6')
+
+    const items = container.querySelectorAll('li[data-source-line]')
+    expect(items.length).toBe(3)
+    expect(items[0].getAttribute('data-source-line')).toBe('8')
+    expect(items[1].getAttribute('data-source-line')).toBe('9')
+    expect(items[2].getAttribute('data-source-line')).toBe('10')
   })
 
   it('wraps code blocks with .code-block-wrapper, language badge, copy and wrap buttons', () => {

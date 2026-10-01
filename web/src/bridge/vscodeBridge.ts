@@ -129,10 +129,11 @@ export function revealInVscodeExplorer(path: string): void {
   })
 }
 
-export function switchToNativeTextEditor(line?: number): void {
+export function switchToNativeTextEditor(line?: number, userScrolled?: boolean): void {
   postToHost({
     type: 'switchToTextEditor',
     line,
+    userScrolled,
   })
 }
 

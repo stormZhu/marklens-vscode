@@ -106,6 +106,12 @@ function annotateSourceLines(tokens: Token[], startLine: number): void {
         if (token.type === 'list') {
             let itemLine = line
             for (const item of (token as Tokens.List).items) {
+                const itemSpan = countNewlines(item.raw.replace(/\n+$/, ''))
+                ;(item as Token & TokenPositionMeta).position = {
+                    lines: [],
+                    start: { offset: 0, line: itemLine, column: 0 },
+                    end: { offset: 0, line: itemLine + itemSpan, column: 0 },
+                }
                 if (item.tokens) annotateSourceLines(item.tokens, itemLine)
                 itemLine += countNewlines(item.raw)
             }
@@ -165,7 +171,7 @@ export function configureMarkedRenderer(): void {
                 // constructs resolve exactly like the default renderer.
                 const tokens = isObj && Array.isArray((token as TokVal).tokens) ? (token as TokVal).tokens as Token[] : []
                 const body = tokens.length ? this.parser.parseInline(tokens) : text
-                return `<h${depth} id="${id}"${sourceLineAttr(token)}>${body}</h${depth}>`
+                return `<h${depth} id="${id}"${sourceRangeAttr(token)}>${body}</h${depth}>`
             },
             code(...args: unknown[]): string {
                 // v18: code({ text, lang })  |  v4: code(text, lang)
@@ -184,12 +190,12 @@ export function configureMarkedRenderer(): void {
             paragraph(...args: unknown[]): string {
                 const token = args[0] as TokVal | undefined
                 const body = this.parser.parseInline((token?.tokens as Token[]) || [])
-                return `<p${sourceLineAttr(token)}>${body}</p>\n`
+                return `<p${sourceRangeAttr(token)}>${body}</p>\n`
             },
             blockquote(...args: unknown[]): string {
                 const token = args[0] as TokVal | undefined
                 const body = this.parser.parse((token?.tokens as Token[]) || [])
-                return `<blockquote${sourceLineAttr(token)}>\n${body}</blockquote>\n`
+                return `<blockquote${sourceRangeAttr(token)}>\n${body}</blockquote>\n`
             },
             hr(...args: unknown[]): string {
                 return `<hr${sourceLineAttr(args[0])}>\n`
@@ -204,12 +210,12 @@ export function configureMarkedRenderer(): void {
                 }
                 const type = ordered ? 'ol' : 'ul'
                 const startAttr = ordered && start !== 1 ? ` start="${start}"` : ''
-                return `<${type}${startAttr}${sourceLineAttr(token)}>\n${body}</${type}>\n`
+                return `<${type}${startAttr}${sourceRangeAttr(token)}>\n${body}</${type}>\n`
             },
             listitem(...args: unknown[]): string {
                 const token = args[0] as TokVal | undefined
                 const body = this.parser.parse((token?.tokens as Token[]) || [])
-                return `<li>${body}</li>\n`
+                return `<li${sourceRangeAttr(token)}>${body}</li>\n`
             },
             table(...args: unknown[]): string {
                 const token = args[0] as TokVal | undefined

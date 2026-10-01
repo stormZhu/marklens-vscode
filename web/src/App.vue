@@ -212,6 +212,7 @@
         @scroll.capture="onContentScroll"
         @wheel.passive="onUserScrollInteract"
         @touchmove.passive="onUserScrollInteract"
+        @mousedown.capture="onContentMouseDown"
       >
         <div v-show="viewMode === 'rendered'" class="rendered-view-wrap">
           <MarkdownPreview
@@ -315,7 +316,11 @@ import { dirName } from '@/utils/path'
 import { highlightCode } from '@/utils/globals'
 import { splitHighlightedHtml } from '@/utils/codeLinkPreview'
 import { flashElement } from '@/utils/domFlash'
-import { collectLineBlocks, findBlockAtOrBefore } from '@/utils/scrollRenderedToLine'
+import {
+  collectLineBlocks,
+  computeTopSourceLineFromBlocks,
+  computeScrollTopForSourceLine,
+} from '@/utils/scrollRenderedToLine'
 
 const { t } = useI18n()
 const { currentLocale, toggleLocale } = useLocale()
@@ -442,7 +447,11 @@ function toggleSearch() {
 
 let lastViewModeToggleAt = 0
 let scrollReportTimer: ReturnType<typeof setTimeout> | null = null
+let lastScrollReportAt = 0
 let pendingTargetLine: number | null = null
+let hasUserScrolled = false
+let programmaticScrollUntil = 0
+let contentResizeObserver: ResizeObserver | null = null
 
 function getRenderedScrollEl(): HTMLElement | null {
   return (
@@ -458,40 +467,36 @@ function getRawScrollEl(): HTMLElement | null {
   )
 }
 
+function setupContentResizeObserver() {
+  if (typeof ResizeObserver === 'undefined') return
+  if (!contentResizeObserver) {
+    contentResizeObserver = new ResizeObserver(() => {
+      if (!hasUserScrolled && pendingTargetLine && pendingTargetLine > 0) {
+        scrollToSourceLine(pendingTargetLine)
+      }
+    })
+  }
+  contentResizeObserver.disconnect()
+  const contentEl = fileContentRef.value?.querySelector('.markdown-content')
+  if (contentEl) {
+    contentResizeObserver.observe(contentEl)
+  }
+}
+
 function getCurrentTopSourceLine(): number | undefined {
   const totalLines = Math.max(1, sourceCodeLines.value.length)
   if (viewMode.value === 'rendered') {
     const bodyEl = getRenderedScrollEl()
     if (!bodyEl) return undefined
     const scrollTop = bodyEl.scrollTop
-    if (scrollTop <= 2) return 1
+    if (scrollTop <= 1) return 1
     const blocks = collectLineBlocks(bodyEl)
     if (blocks.length > 0) {
-      let idx = 0
-      for (let i = 0; i < blocks.length; i++) {
-        if (blocks[i].top <= scrollTop + 2) idx = i
-        else break
-      }
-      const blk = blocks[idx]
-      const nextTop = idx + 1 < blocks.length ? blocks[idx + 1].top : bodyEl.scrollHeight
-      const endAttr = parseInt(blk.el.getAttribute('data-source-end') || '', 10)
-      const endLine =
-        Number.isFinite(endAttr) && endAttr >= blk.line
-          ? endAttr
-          : idx + 1 < blocks.length
-            ? Math.max(blk.line, blocks[idx + 1].line - 1)
-            : totalLines
-      const blockHeight = Math.max(1, nextTop - blk.top)
-      const offsetInBlock = Math.max(0, scrollTop - blk.top)
-      if (endLine > blk.line && offsetInBlock > 4) {
-        const frac = Math.min(1, offsetInBlock / blockHeight)
-        return Math.min(totalLines, Math.round(blk.line + frac * (endLine - blk.line)))
-      }
-      return blk.line
+      return computeTopSourceLineFromBlocks(blocks, scrollTop, totalLines)
     }
     const maxScroll = bodyEl.scrollHeight - bodyEl.clientHeight
     if (maxScroll > 0) {
-      return Math.max(1, Math.min(totalLines, Math.round(1 + (scrollTop / maxScroll) * (totalLines - 1))))
+      return Math.max(1, Math.min(totalLines, 1 + (scrollTop / maxScroll) * (totalLines - 1)))
     }
     return 1
   }
@@ -499,12 +504,19 @@ function getCurrentTopSourceLine(): number | undefined {
   const rawEl = getRawScrollEl()
   if (!rawEl) return undefined
   const scrollTop = rawEl.scrollTop
-  if (scrollTop <= 2) return 1
+  if (scrollTop <= 1) return 1
+  const rawRect = rawEl.getBoundingClientRect()
   const rows = rawEl.querySelectorAll<HTMLElement>('[data-line-number]')
   for (const row of rows) {
-    if (row.offsetTop + row.offsetHeight > scrollTop + 2) {
+    const rRect = row.getBoundingClientRect()
+    const rowTop = rRect.top - rawRect.top + scrollTop
+    if (rowTop + rRect.height > scrollTop + 2) {
       const n = parseInt(row.getAttribute('data-line-number') || '', 10)
-      if (Number.isFinite(n) && n > 0) return n
+      if (Number.isFinite(n) && n > 0) {
+        const frac =
+          rRect.height > 1 ? Math.max(0, Math.min(1, (scrollTop - rowTop) / rRect.height)) : 0
+        return Math.min(totalLines, n + frac)
+      }
     }
   }
   return undefined
@@ -518,75 +530,90 @@ function scrollToSourceLine(line: number | undefined): boolean {
   if (viewMode.value === 'rendered') {
     const bodyEl = getRenderedScrollEl()
     if (!bodyEl) return false
+    programmaticScrollUntil = Date.now() + 150
     if (clampedLine <= 1) {
       bodyEl.scrollTop = 0
-      postToHost({ type: 'updateScrollLine', line: 1 })
       return true
     }
     const blocks = collectLineBlocks(bodyEl)
     if (blocks.length > 0) {
-      const idx = findBlockAtOrBefore(blocks, clampedLine)
-      if (idx >= 0) {
-        const blk = blocks[idx]
-        const nextTop = idx + 1 < blocks.length ? blocks[idx + 1].top : bodyEl.scrollHeight
-        const endAttr = parseInt(blk.el.getAttribute('data-source-end') || '', 10)
-        const endLine =
-          Number.isFinite(endAttr) && endAttr >= blk.line
-            ? endAttr
-            : idx + 1 < blocks.length
-              ? Math.max(blk.line, blocks[idx + 1].line - 1)
-              : totalLines
-        let targetTop = blk.top
-        if (clampedLine > blk.line && endLine > blk.line && nextTop > blk.top) {
-          const frac = Math.min(1, (clampedLine - blk.line) / (endLine - blk.line))
-          targetTop = blk.top + frac * (nextTop - blk.top)
-        }
-        bodyEl.scrollTop = Math.max(0, targetTop)
-        postToHost({ type: 'updateScrollLine', line: clampedLine })
-        return true
-      }
+      bodyEl.scrollTop = computeScrollTopForSourceLine(blocks, clampedLine, totalLines)
+      return true
     }
     return false
   }
 
   const rawEl = getRawScrollEl()
   if (!rawEl) return false
+  programmaticScrollUntil = Date.now() + 150
   if (clampedLine <= 1) {
     rawEl.scrollTop = 0
-    postToHost({ type: 'updateScrollLine', line: 1 })
     return true
   }
-  const row = rawEl.querySelector<HTMLElement>(`[data-line-number="${clampedLine}"]`)
+  const intLine = Math.max(1, Math.min(totalLines, Math.floor(clampedLine)))
+  const frac = Math.max(0, Math.min(1, clampedLine - intLine))
+  const row = rawEl.querySelector<HTMLElement>(`[data-line-number="${intLine}"]`)
   if (!row) return false
-  rawEl.scrollTop = Math.max(0, row.offsetTop)
-  postToHost({ type: 'updateScrollLine', line: clampedLine })
+  const rawRect = rawEl.getBoundingClientRect()
+  const rRect = row.getBoundingClientRect()
+  const rowTop = rRect.top - rawRect.top + rawEl.scrollTop
+  rawEl.scrollTop = Math.max(0, rowTop + frac * rRect.height)
   return true
 }
 
 function onUserScrollInteract() {
+  hasUserScrolled = true
   pendingTargetLine = null
 }
 
+function onContentMouseDown(e: MouseEvent) {
+  const scrollEl = viewMode.value === 'rendered' ? getRenderedScrollEl() : getRawScrollEl()
+  if (!scrollEl) return
+  const rect = scrollEl.getBoundingClientRect()
+  if (e.clientX >= rect.left + scrollEl.clientWidth - 2) {
+    onUserScrollInteract()
+  }
+}
+
+function reportCurrentScrollLine() {
+  const line = getCurrentTopSourceLine()
+  if (line && line > 0) {
+    postToHost({ type: 'updateScrollLine', line, userScrolled: hasUserScrolled })
+  }
+}
+
 function onContentScroll() {
+  if (!hasUserScrolled || Date.now() < programmaticScrollUntil) {
+    return
+  }
+  const now = Date.now()
+  if (now - lastScrollReportAt >= 40) {
+    lastScrollReportAt = now
+    reportCurrentScrollLine()
+  }
   if (scrollReportTimer) clearTimeout(scrollReportTimer)
   scrollReportTimer = setTimeout(() => {
     scrollReportTimer = null
-    const line = getCurrentTopSourceLine()
-    if (line && line > 0) {
-      postToHost({ type: 'updateScrollLine', line })
-    }
-  }, 80)
+    lastScrollReportAt = Date.now()
+    reportCurrentScrollLine()
+  }, 60)
 }
 
 function toggleViewMode() {
   const now = Date.now()
   if (now - lastViewModeToggleAt < 150) return
   lastViewModeToggleAt = now
-  const line = getCurrentTopSourceLine()
+  const line = hasUserScrolled
+    ? getCurrentTopSourceLine()
+    : (pendingTargetLine ?? getCurrentTopSourceLine())
   viewMode.value = viewMode.value === 'rendered' ? 'raw' : 'rendered'
   if (line && line > 0) {
     pendingTargetLine = line
+    if (hasUserScrolled) {
+      postToHost({ type: 'updateScrollLine', line, userScrolled: true })
+    }
     nextTick(() => {
+      setupContentResizeObserver()
       scrollToSourceLine(line)
       requestAnimationFrame(() => {
         if (pendingTargetLine === line) {
@@ -598,8 +625,10 @@ function toggleViewMode() {
 }
 
 function handleEditInVscode() {
-  const line = getCurrentTopSourceLine()
-  switchToNativeTextEditor(line)
+  const line = hasUserScrolled
+    ? getCurrentTopSourceLine()
+    : (pendingTargetLine ?? getCurrentTopSourceLine())
+  switchToNativeTextEditor(line, hasUserScrolled)
 }
 
 function handleRevealInExplorer() {
@@ -648,6 +677,7 @@ async function handleExportHtml() {
 }
 
 function handleTocJump(line: number, anchorId?: string) {
+  onUserScrollInteract()
   if (viewMode.value === 'rendered' && anchorId) {
     const el = document.getElementById(anchorId)
     if (el) {
@@ -752,6 +782,21 @@ function onKeyDown(e: KeyboardEvent) {
   if ((e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && (e.code === 'KeyM' || e.key.toLowerCase() === 'm')) {
     e.preventDefault()
     handleEditInVscode()
+    return
+  }
+  const tag = (e.target as HTMLElement | null)?.tagName
+  if (
+    tag !== 'INPUT' &&
+    tag !== 'TEXTAREA' &&
+    (e.key === 'ArrowDown' ||
+      e.key === 'ArrowUp' ||
+      e.key === 'PageDown' ||
+      e.key === 'PageUp' ||
+      e.key === 'Home' ||
+      e.key === 'End' ||
+      e.key === ' ')
+  ) {
+    onUserScrollInteract()
   }
 }
 
@@ -784,11 +829,18 @@ function onVscodeScrollToLine(e: Event) {
   const detail = (e as CustomEvent<{ line?: number }>).detail
   const line = detail?.line
   if (typeof line === 'number' && line > 0) {
+    hasUserScrolled = false
     pendingTargetLine = line
     nextTick(() => {
+      setupContentResizeObserver()
       scrollToSourceLine(line)
+      requestAnimationFrame(() => {
+        if (!hasUserScrolled && pendingTargetLine === line) {
+          scrollToSourceLine(line)
+        }
+      })
       setTimeout(() => {
-        if (pendingTargetLine === line) {
+        if (!hasUserScrolled && pendingTargetLine === line) {
           scrollToSourceLine(line)
         }
       }, 120)
@@ -797,7 +849,8 @@ function onVscodeScrollToLine(e: Event) {
 }
 
 function onRealignScroll() {
-  if (pendingTargetLine && pendingTargetLine > 0) {
+  setupContentResizeObserver()
+  if (!hasUserScrolled && pendingTargetLine && pendingTargetLine > 0) {
     scrollToSourceLine(pendingTargetLine)
   }
 }
@@ -809,11 +862,14 @@ onMounted(() => {
   window.addEventListener('clawbench-vscode-theme-updated', onVscodeThemeUpdated)
   window.addEventListener('clawbench-vscode-scroll-to-line', onVscodeScrollToLine)
   window.addEventListener('realign-file-scroll', onRealignScroll)
+  nextTick(() => setupContentResizeObserver())
   postToHost({ type: 'webviewReady' })
 })
 
 onBeforeUnmount(() => {
   if (scrollReportTimer) clearTimeout(scrollReportTimer)
+  contentResizeObserver?.disconnect()
+  contentResizeObserver = null
   document.removeEventListener('click', onDocumentClick)
   window.removeEventListener('keydown', onKeyDown)
   window.removeEventListener('clawbench-vscode-command', onVscodeCommand)
@@ -954,6 +1010,12 @@ onBeforeUnmount(() => {
 </style>
 
 <style>
+/* Allow scrolling beyond the last line (matches VSCode editor.scrollBeyondLastLine for seamless toggle) */
+.vscode-md-app .markdown-body,
+.vscode-md-app .code-preview-scroll {
+  padding-bottom: 70vh !important;
+}
+
 /* Hide chat-only attach/quote actions inside the standalone VSCode Markdown preview */
 .code-block-attach-btn,
 .table-block-attach-btn,

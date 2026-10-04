@@ -15,6 +15,9 @@ fs.mkdirSync(extDir, { recursive: true })
 // Copy package.json, README.md, dist/
 fs.copyFileSync(path.join(rootDir, 'package.json'), path.join(extDir, 'package.json'))
 fs.copyFileSync(path.join(rootDir, 'README.md'), path.join(extDir, 'README.md'))
+if (fs.existsSync(path.join(rootDir, 'CHANGELOG.md'))) {
+  fs.copyFileSync(path.join(rootDir, 'CHANGELOG.md'), path.join(extDir, 'CHANGELOG.md'))
+}
 fs.cpSync(path.join(rootDir, 'dist'), path.join(extDir, 'dist'), { recursive: true })
 
 // Write [Content_Types].xml
@@ -53,6 +56,7 @@ const vsixManifest = `<?xml version="1.0" encoding="utf-8"?>
   <Assets>
     <Asset Type="Microsoft.VisualStudio.Code.Manifest" Path="extension/package.json" Addressable="true" />
     <Asset Type="Microsoft.VisualStudio.Services.Content.Details" Path="extension/README.md" Addressable="true" />
+    <Asset Type="Microsoft.VisualStudio.Services.Content.Changelog" Path="extension/CHANGELOG.md" Addressable="true" />
   </Assets>
 </PackageManifest>`
 fs.writeFileSync(path.join(stageDir, 'extension.vsixmanifest'), vsixManifest, 'utf-8')

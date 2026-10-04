@@ -33,6 +33,8 @@ export const localConfig = reactive<Record<string, string | boolean | number | n
   lineNumbers: true,
   stickyScroll: true,
   uiScale: 1,
+  fontSize: 16,
+  cmdWheelZoom: false,
   headerShortcutTips: true,
   markdownCodeLinkPreview: true,
   tableRowExpand: false,
@@ -49,6 +51,18 @@ if (typeof localStorage !== 'undefined') {
     } catch {
       // ignore storage errors in restricted webviews
     }
+  }
+}
+
+// Apply persisted fontSize / uiScale on startup
+if (typeof document !== 'undefined') {
+  const fs = Number(localConfig.fontSize)
+  if (fs > 0) {
+    document.documentElement.style.setProperty('--md-font-size', `${fs}px`)
+  }
+  const scale = Number(localConfig.uiScale)
+  if (scale > 0 && scale !== 1) {
+    document.documentElement.style.zoom = String(scale)
   }
 }
 
@@ -85,6 +99,14 @@ export function setLocalConfig(key: string, value: string | boolean | number | n
 
   if (key === 'tableRowExpand') {
     saveConfigPreference('tableRowExpand', value)
+  }
+
+  if (key === 'fontSize' && typeof value === 'number' && typeof document !== 'undefined') {
+    document.documentElement.style.setProperty('--md-font-size', `${value}px`)
+  }
+
+  if (key === 'uiScale' && typeof value === 'number' && typeof document !== 'undefined') {
+    document.documentElement.style.zoom = value === 1 ? '' : String(value)
   }
 }
 

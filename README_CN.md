@@ -37,6 +37,7 @@
 
 ### 5. 📑 完整的大纲目录（TOC Dock）与顶栏工具
 - **可拖拽伸缩大纲目录**：支持停靠在左侧或右侧，点击标题实时平滑滚动定位。
+- **字体大小与界面缩放**：顶栏 `⋮` 菜单支持 Markdown 正文字号自由微调（10px–32px，各级标题等比自适应）、界面整体缩放（50%–200%）及一键重置；提供独立的 `Cmd/Ctrl + 滚轮缩放` 安全开关。
 - **页内快速搜索**：按下 `Cmd+F` / `Ctrl+F` 呼出轻量页内搜索栏，高亮匹配结果并支持回车导航。
 - **富媒体渲染引擎**：全面支持 KaTeX 数学公式渲染、Mermaid 流程图/时序图、点击图片呼出 Lightbox 大图画廊。
 
@@ -52,6 +53,7 @@
 | **划选文字添加到 AI 对话** | — | `Cmd+U` | `Ctrl+U` |
 | **划选文字跳转源码行编辑** | — | `Enter` | `Enter` |
 | **预览页内查找** | — | `Cmd+F` | `Ctrl+F` |
+| **重置界面缩放到 100%** | — | `Cmd+0` | `Ctrl+0` |
 | **打开 Markdown 预览** | `marklens.openPreview` | *(可在快捷键设置中自定义)* | *(可在快捷键设置中自定义)* |
 | **切换回源码编辑器** | `marklens.showSource` | *(可在快捷键设置中自定义)* | *(可在快捷键设置中自定义)* |
 
@@ -109,13 +111,13 @@ npm run package:vsix
 
 ```bash
 # 安装到 VS Code
-code --install-extension marklens-0.1.2.vsix --force
+code --install-extension marklens-0.1.3.vsix --force
 
 # 安装到 Trae CN（国内版）
-trae-cn --install-extension marklens-0.1.2.vsix --force
+trae-cn --install-extension marklens-0.1.3.vsix --force
 
 # 安装到 Trae（国际版）
-trae --install-extension marklens-0.1.2.vsix --force
+trae --install-extension marklens-0.1.3.vsix --force
 ```
 
 ### 图形界面安装 (GUI)
@@ -123,7 +125,7 @@ trae --install-extension marklens-0.1.2.vsix --force
 1. 打开 VSCode 或 Trae 的**扩展视图**（快捷键 `Cmd+Shift+X` / `Ctrl+Shift+X`）。
 2. 点击扩展面板右上角的 `···`（更多操作）菜单。
 3. 选择 **从 VSIX 安装... (Install from VSIX...)**。
-4. 选中生成的 `marklens-0.1.2.vsix` 文件。
+4. 选中生成的 `marklens-0.1.3.vsix` 文件。
 5. 安装完成后，在编辑器中按 `Cmd+Shift+P` / `Ctrl+Shift+P`，执行 **`Developer: Reload Window`** 重新加载窗口即可使用。
 
 ---

@@ -37,6 +37,7 @@ Interactive, code-aware Markdown preview and custom editor for VSCode & Trae —
 | **Open Markdown Preview** | `marklens.openPreview` | *(Customizable in `⌘K ⌘S`)* | *(Customizable in `Ctrl+K Ctrl+S`)* |
 | **Switch to Source Editor** | `marklens.showSource` | *(Customizable in `⌘K ⌘S`)* | *(Customizable in `Ctrl+K Ctrl+S`)* |
 | **In-Page Search (Inside Preview)** | — | `Cmd+F` | `Ctrl+F` |
+| **Reset UI Zoom to 100%** | — | `Cmd+0` | `Ctrl+0` |
 
 ## Usage
 
@@ -46,7 +47,10 @@ Interactive, code-aware Markdown preview and custom editor for VSCode & Trae —
    - Press `Cmd+Alt+V` (macOS) / `Ctrl+Alt+V` (Windows/Linux) or click the Eye icon (`👁️`) in the preview top bar.
 3. **Open Preview to the Side**:
    - Press `Cmd+Alt+K` (macOS) / `Ctrl+Alt+K` (Windows/Linux) in any Markdown file, or click the **MarkLens: Open Markdown Preview to the Side** icon in the editor title bar.
-4. **Select Theme**:
+4. **Font Size & UI Zoom Controls**:
+   - Open the `⋮` dropdown menu in the top bar to fine-tune Markdown font size (`A−` / `A+`, 10–32px) and global UI zoom (`−` / `+` / `↺ Reset`, 50%–200%).
+   - Optionally toggle `Cmd/Ctrl + Scroll Zoom` to enable smooth zoom via mouse wheel. Press `Cmd+0` (`Ctrl+0`) anytime to reset to 100%.
+5. **Select Theme**:
    - Click the Palette icon in the preview top bar, or run command `MarkLens: Select Markdown Preview Theme`.
 
 ## Local Development & Installation (本地构建与安装)
@@ -86,13 +90,13 @@ npm run package:vsix
 
 ```bash
 # 安装到 VS Code
-code --install-extension ./marklens-0.1.2.vsix --force
+code --install-extension ./marklens-0.1.3.vsix --force
 
 # 安装到 Trae CN（国内版）
-trae-cn --install-extension ./marklens-0.1.2.vsix --force
+trae-cn --install-extension ./marklens-0.1.3.vsix --force
 
 # 安装到 Trae（国际版）
-trae --install-extension ./marklens-0.1.2.vsix --force
+trae --install-extension ./marklens-0.1.3.vsix --force
 ```
 
 ### Graphical Installation (GUI)

@@ -7,7 +7,7 @@
     max-width: min(900px, 100%);
     margin: 0 auto;
     padding: var(--space-5);
-    font-size: var(--font-size-md);
+    font-size: var(--md-font-size, var(--font-size-md));
     border-radius: 0;
     background: transparent;
     color: var(--text-primary);

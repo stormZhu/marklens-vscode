@@ -189,6 +189,30 @@
                 <span>{{ t('file.header.tableRowExpand') }}</span>
                 <span v-if="tableRowExpandEnabled" class="wrap-check">✓</span>
               </button>
+              <div class="dropdown-item font-size-row">
+                <ALargeSmall :size="14" />
+                <span>{{ t('file.header.fontSize') }}</span>
+                <div class="font-size-controls">
+                  <button class="font-size-btn" :disabled="currentFontSize <= FONT_SIZE_MIN" @click.stop="decreaseFontSize">A−</button>
+                  <span class="font-size-value">{{ currentFontSize }}px</span>
+                  <button class="font-size-btn" :disabled="currentFontSize >= FONT_SIZE_MAX" @click.stop="increaseFontSize">A+</button>
+                </div>
+              </div>
+              <div class="dropdown-item font-size-row">
+                <ZoomIn :size="14" />
+                <span>{{ t('file.header.uiScale') }}</span>
+                <div class="font-size-controls">
+                  <button class="font-size-btn" :disabled="currentUiScale <= UI_SCALE_MIN" @click.stop="decreaseUiScale">−</button>
+                  <span class="font-size-value">{{ Math.round(currentUiScale * 100) }}%</span>
+                  <button class="font-size-btn" :disabled="currentUiScale >= UI_SCALE_MAX" @click.stop="increaseUiScale">+</button>
+                  <button class="font-size-btn" :disabled="currentUiScale === 1" :title="t('file.header.uiScaleReset')" @click.stop="setLocalConfig('uiScale', 1)"><RotateCcw :size="10" /></button>
+                </div>
+              </div>
+              <button class="dropdown-item" @click="toggleCmdWheelZoom">
+                <Mouse :size="14" />
+                <span>{{ t('file.header.cmdWheelZoom') }}</span>
+                <span v-if="cmdWheelZoomEnabled" class="wrap-check">✓</span>
+              </button>
               <div class="dropdown-divider" />
               <button class="dropdown-item" @click="handleToggleLocale">
                 <Languages :size="14" />
@@ -282,6 +306,7 @@
 import { ref, computed, watch, provide, readonly, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
+  ALargeSmall,
   Code2,
   Eye,
   FileOutput,
@@ -290,11 +315,14 @@ import {
   Languages,
   List,
   MoreVertical,
+  Mouse,
   Palette,
   Pencil,
+  RotateCcw,
   Search,
   Table,
   TextWrap,
+  ZoomIn,
 } from 'lucide-vue-next'
 import FileIcon from '@/components/common/FileIcon.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
@@ -358,6 +386,34 @@ const wordWrap = computed(() => localConfig.wordWrap !== false)
 const showLineNumbers = computed(() => localConfig.lineNumbers !== false)
 const codeLinkPreviewEnabled = computed(() => localConfig.markdownCodeLinkPreview !== false)
 const tableRowExpandEnabled = computed(() => localConfig.tableRowExpand === true)
+const cmdWheelZoomEnabled = computed(() => localConfig.cmdWheelZoom === true)
+
+const FONT_SIZE_MIN = 10
+const FONT_SIZE_MAX = 32
+const FONT_SIZE_STEP = 1
+const currentFontSize = computed(() => Number(localConfig.fontSize) || 16)
+
+function decreaseFontSize() {
+  const next = Math.max(FONT_SIZE_MIN, currentFontSize.value - FONT_SIZE_STEP)
+  setLocalConfig('fontSize', next)
+}
+
+function increaseFontSize() {
+  const next = Math.min(FONT_SIZE_MAX, currentFontSize.value + FONT_SIZE_STEP)
+  setLocalConfig('fontSize', next)
+}
+
+const currentUiScale = computed(() => Number(localConfig.uiScale) || 1)
+
+function decreaseUiScale() {
+  const raw = Math.round((currentUiScale.value - UI_SCALE_STEP) * 100) / 100
+  setLocalConfig('uiScale', Math.max(UI_SCALE_MIN, raw))
+}
+
+function increaseUiScale() {
+  const raw = Math.round((currentUiScale.value + UI_SCALE_STEP) * 100) / 100
+  setLocalConfig('uiScale', Math.min(UI_SCALE_MAX, raw))
+}
 
 const currentFile = computed(() => ({
   name: documentState.name || 'README.md',
@@ -668,6 +724,10 @@ function toggleTableRowExpand() {
   setLocalConfig('tableRowExpand', !tableRowExpandEnabled.value)
 }
 
+function toggleCmdWheelZoom() {
+  setLocalConfig('cmdWheelZoom', !cmdWheelZoomEnabled.value)
+}
+
 function handleToggleLocale() {
   toggleLocale()
   moreMenuOpen.value = false
@@ -815,6 +875,11 @@ function onKeyDown(e: KeyboardEvent) {
     handleEditInVscode()
     return
   }
+  if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && (e.key === '0' || e.code === 'Digit0')) {
+    e.preventDefault()
+    setLocalConfig('uiScale', 1)
+    return
+  }
   const tag = (e.target as HTMLElement | null)?.tagName
   if (
     tag !== 'INPUT' &&
@@ -886,9 +951,24 @@ function onRealignScroll() {
   }
 }
 
+const UI_SCALE_MIN = 0.5
+const UI_SCALE_MAX = 2.0
+const UI_SCALE_STEP = 0.05
+
+function onCmdWheel(e: WheelEvent) {
+  if (!cmdWheelZoomEnabled.value) return
+  if (!(e.metaKey || e.ctrlKey)) return
+  e.preventDefault()
+  const delta = e.deltaY < 0 ? UI_SCALE_STEP : -UI_SCALE_STEP
+  const raw = Math.round((Number(localConfig.uiScale || 1) + delta) * 100) / 100
+  const next = Math.min(UI_SCALE_MAX, Math.max(UI_SCALE_MIN, raw))
+  setLocalConfig('uiScale', next)
+}
+
 onMounted(() => {
   document.addEventListener('click', onDocumentClick)
   window.addEventListener('keydown', onKeyDown)
+  window.addEventListener('wheel', onCmdWheel, { passive: false })
   window.addEventListener('clawbench-vscode-command', onVscodeCommand)
   window.addEventListener('clawbench-vscode-theme-updated', onVscodeThemeUpdated)
   window.addEventListener('clawbench-vscode-scroll-to-line', onVscodeScrollToLine)
@@ -903,6 +983,7 @@ onBeforeUnmount(() => {
   contentResizeObserver = null
   document.removeEventListener('click', onDocumentClick)
   window.removeEventListener('keydown', onKeyDown)
+  window.removeEventListener('wheel', onCmdWheel)
   window.removeEventListener('clawbench-vscode-command', onVscodeCommand)
   window.removeEventListener('clawbench-vscode-theme-updated', onVscodeThemeUpdated)
   window.removeEventListener('clawbench-vscode-scroll-to-line', onVscodeScrollToLine)
@@ -1152,6 +1233,44 @@ onBeforeUnmount(() => {
 }
 .file-header-dropdown-menu .dropdown-item:hover .wrap-check {
   color: #fff;
+}
+.file-header-dropdown-menu .font-size-row {
+  cursor: default;
+}
+.file-header-dropdown-menu .font-size-row:hover {
+  background: none;
+  color: var(--text-primary);
+}
+.font-size-controls {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.font-size-btn {
+  padding: 1px 6px;
+  border: 1px solid var(--border-color);
+  border-radius: 3px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+  line-height: 1.4;
+}
+.font-size-btn:hover:not(:disabled) {
+  background: var(--accent-color);
+  color: #fff;
+  border-color: var(--accent-color);
+}
+.font-size-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.font-size-value {
+  min-width: 34px;
+  text-align: center;
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary, var(--text-primary));
 }
 
 /* Toast banner */
